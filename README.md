@@ -8,6 +8,7 @@ night. The results go to [garmin_connect](https://github.com/peterb154/garmin_co
 ```
 20:30  snore-record.timer   ffmpeg → ~/snore-data/recordings/<start>.opus (hourly, 16 kHz, 24 kbps)
 08:30  snore-analyze.timer  stop recording → YAMNet → nights/<date>.json + clips → POST
+12:00  snore-update.timer   git pull --ff-only && uv sync (deploys = merge to main)
 ```
 
 **Privacy:** no audio leaves the Pi. Full-night audio is deleted once it's analyzed. One 10 s
@@ -23,6 +24,10 @@ git clone https://github.com/peterb154/snore-tracker ~/snore-tracker
 ~/snore-tracker/deploy/install.sh   # uv, deps, model, systemd timers
 nano ~/snore-tracker/.env           # SNORE_MIC, SNORE_TOKEN
 ```
+
+Deploys are pull-based. The Pi picks up `main` at 12:00 each day (`journalctl -u snore-update`).
+It has no inbound deploy endpoint, because it runs no web server. If a change touches
+`deploy/*.service` or `*.timer`, re-run `deploy/install.sh`.
 
 ## Mic
 

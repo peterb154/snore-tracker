@@ -15,5 +15,5 @@ mkdir -p models
 
 sudo cp deploy/snore-*.service deploy/snore-*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now snore-record.timer snore-analyze.timer
+sudo systemctl enable --now snore-record.timer snore-analyze.timer snore-update.timer
 systemctl list-timers 'snore-*'
