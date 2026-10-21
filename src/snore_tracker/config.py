@@ -3,6 +3,7 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 HOME = Path.home()
 
@@ -20,6 +21,8 @@ class Config:
             "MODEL_PATH", HOME / "snore-tracker/models/yamnet.tflite", Path
         )
     )
+    # Must match the watch: minute keys are local wall-clock time, like Garmin's.
+    tz: ZoneInfo = field(default_factory=lambda: ZoneInfo(_env("LOCAL_TZ", "America/Chicago")))
     # A minute counts as snoring when its peak YAMNet "Snoring" score reaches this.
     threshold: float = field(default_factory=lambda: _env("SNORE_THRESHOLD", 0.5, float))
     # Events: runs of snoring minutes, bridging gaps up to max_gap, kept if >= min_event.

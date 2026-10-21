@@ -3,15 +3,17 @@ import shutil
 import subprocess
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
 
-from snore_tracker import analyze
+from snore_tracker import analyze, model
 from snore_tracker.analyze import Frame
 from snore_tracker.config import Config
 
-START = datetime(2026, 10, 20, 23, 0)
+CHI = ZoneInfo("America/Chicago")
+START = datetime(2026, 10, 20, 23, 0, tzinfo=CHI)
 
 
 @pytest.fixture
@@ -26,6 +28,7 @@ def cfg(tmp_path):
         clip_seconds=10,
         clip_days=14,
         keep_audio=False,
+        tz=CHI,
     )
 
 
@@ -51,14 +54,17 @@ def minutes_for(probs, db_max=-30.0):
 
 
 def test_night_is_wake_up_date():
-    assert analyze.night_of(datetime(2026, 10, 20, 20, 30)) == date(2026, 10, 21)
-    assert analyze.night_of(datetime(2026, 10, 21, 3, 0)) == date(2026, 10, 21)
-    assert analyze.night_of(datetime(2026, 10, 21, 8, 29)) == date(2026, 10, 21)
+    for t in [(10, 20, 20, 30), (10, 21, 3, 0), (10, 21, 8, 29)]:
+        assert analyze.night_of(datetime(2026, *t, tzinfo=CHI), CHI) == date(2026, 10, 21)
 
 
 def test_group_segments_splits_nights():
-    paths = ["2026-10-20T20-30-00.opus", "2026-10-21T02-00-00.opus", "2026-10-21T21-00-00.opus"]
-    nights = analyze.group_segments(paths)
+    paths = [
+        "2026-10-20T20-30-00-0500.opus",
+        "2026-10-21T02-00-00-0500.opus",
+        "2026-10-21T21-00-00-0500.opus",
+    ]
+    nights = analyze.group_segments(paths, CHI)
     assert [len(v) for v in nights.values()] == [2, 1]
     assert list(nights) == [date(2026, 10, 21), date(2026, 10, 22)]
 
@@ -67,11 +73,24 @@ def test_per_minute_takes_max_prob_and_energy_mean_db():
     frames = frames_for([0.1])
     frames[5].snore_prob = 0.8
     frames[0].db = -10.0  # one loud frame among -40s
-    (m,) = analyze.per_minute(frames)
+    (m,) = analyze.per_minute(frames, CHI)
     assert m["t"] == "2026-10-20T23:00"
     assert m["snore_prob"] == 0.8
     assert m["db_max"] == -10.0
     assert -40 < m["db_avg"] < -10  # energy mean is pulled up by the loud frame
+
+
+def test_dst_fall_back_segments_stay_distinct_and_local():
+    # 2026-11-01: 01:30 happens twice, as -0500 (CDT) then -0600 (CST)
+    cdt, cst = "2026-11-01T01-30-00-0500.opus", "2026-11-01T01-30-00-0600.opus"
+    assert analyze.segment_start(cst) - analyze.segment_start(cdt) == timedelta(hours=1)
+    assert list(analyze.group_segments([cst, cdt], CHI).values()) == [[Path(cdt), Path(cst)]]
+    assert analyze.minute_key(analyze.segment_start(cst), CHI) == "2026-11-01T01:30"
+
+
+def test_dst_spring_forward_offsets_skip_the_missing_hour():
+    start = analyze.segment_start("2026-03-08T01-30-00-0600.opus")
+    assert analyze.minute_key(start + timedelta(hours=1), CHI) == "2026-03-08T03:30"
 
 
 def test_events_bridge_small_gaps_and_drop_short_runs(cfg):
@@ -134,11 +153,13 @@ class LoudnessModel:
         return 0.9 if np.sqrt(np.mean(window**2)) > 0.02 else 0.01
 
 
-@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
-def test_analyze_night_end_to_end(cfg):
-    # 65 s quiet (clear of the minute boundary), then 2 minutes of loud tone
-    cfg.recordings.mkdir(parents=True)
-    seg = cfg.recordings / "2026-10-21T02-00-00.opus"
+needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+
+
+def make_segment(cfg):
+    """65 s quiet (clear of the minute boundary), then 2 minutes of loud tone."""
+    cfg.recordings.mkdir(parents=True, exist_ok=True)
+    seg = cfg.recordings / "2026-10-21T02-00-00-0500.opus"
     subprocess.run(
         [
             "ffmpeg",
@@ -166,6 +187,12 @@ def test_analyze_night_end_to_end(cfg):
         ],
         check=True,
     )
+    return seg
+
+
+@needs_ffmpeg
+def test_analyze_night_end_to_end(cfg):
+    seg = make_segment(cfg)
     out = analyze.analyze_night(date(2026, 10, 21), [seg], LoudnessModel(), cfg)
 
     payload = json.loads(out.read_text())
@@ -174,3 +201,41 @@ def test_analyze_night_end_to_end(cfg):
     clip = cfg.data_dir / payload["events"][0]["clip"]
     assert clip.exists()
     assert not seg.exists()  # full-night audio deleted after success
+
+
+@needs_ffmpeg
+def test_rerun_replaces_clips_and_reposts(cfg):
+    cfg.keep_audio = True
+    seg = make_segment(cfg)
+    out = analyze.analyze_night(date(2026, 10, 21), [seg], LoudnessModel(), cfg)
+    stale = cfg.clips / "2026-10-21" / "stale.opus"
+    stale.touch()
+    out.with_suffix(".posted").touch()
+
+    analyze.analyze_night(date(2026, 10, 21), [seg], LoudnessModel(), cfg)
+
+    assert seg.exists()  # KEEP_AUDIO
+    assert not stale.exists()
+    assert not out.with_suffix(".posted").exists()  # new numbers get posted again
+
+
+def test_main_refuses_while_recording(cfg, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(cfg.data_dir))
+    monkeypatch.setattr(analyze, "recording_active", lambda: True)
+    with pytest.raises(SystemExit) as exit_:
+        analyze.main()
+    assert "snore-record is running" in str(exit_.value.code)
+
+
+@needs_ffmpeg
+def test_main_analyzes_a_just_finished_night(cfg, monkeypatch):
+    # The recorder stops seconds before analysis, so a fresh segment must not be skipped
+    seg = make_segment(cfg)
+    monkeypatch.setenv("DATA_DIR", str(cfg.data_dir))
+    monkeypatch.setattr(analyze, "recording_active", lambda: False)
+    monkeypatch.setattr(model, "Yamnet", lambda path: LoudnessModel())
+    with pytest.raises(SystemExit) as exit_:
+        analyze.main()
+    assert exit_.value.code == 0
+    assert (cfg.nights / "2026-10-21.json").exists()
+    assert not seg.exists()

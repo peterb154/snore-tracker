@@ -33,7 +33,12 @@ def main():
         try:
             status = post_night(path, cfg)
         except (urllib.error.URLError, TimeoutError) as e:  # retried on the next run
-            print(f"{path.stem}: FAILED {e}", file=sys.stderr)
+            detail = (
+                e.read().decode(errors="replace")[:500]
+                if isinstance(e, urllib.error.HTTPError)
+                else ""
+            )
+            print(f"{path.stem}: FAILED {e} {detail}", file=sys.stderr)
             failed = True
             continue
         path.with_suffix(".posted").touch()
