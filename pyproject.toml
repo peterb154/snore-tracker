@@ -1,0 +1,27 @@
+[project]
+name = "snore-tracker"
+version = "0.1.0"
+description = "Bedside snore tracker: record overnight, YAMNet analysis in the morning"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ai-edge-litert>=2.0",
+    "numpy>=2.0",
+]
+
+[project.scripts]
+snore-analyze = "snore_tracker.analyze:main"
+snore-post = "snore_tracker.post:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

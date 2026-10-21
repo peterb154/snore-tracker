@@ -1,0 +1,9 @@
+[Unit]
+Description=Start snore recording each evening
+
+[Timer]
+OnCalendar=*-*-* 20:30:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target

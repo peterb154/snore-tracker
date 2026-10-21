@@ -1,0 +1,21 @@
+[Unit]
+Description=Snore tracker: overnight recording (hourly Opus segments)
+After=sound.target time-sync.target
+
+[Service]
+User=pi
+EnvironmentFile=/home/pi/snore-tracker/.env
+ExecStartPre=/usr/bin/mkdir -p ${DATA_DIR}/recordings
+# %% is a literal % in systemd. Hourly segments, so a crash loses at most an hour.
+ExecStart=/usr/bin/ffmpeg -nostdin -hide_banner -loglevel warning \
+    -f alsa -i ${SNORE_MIC} -ac 1 -ar 16000 \
+    -c:a libopus -b:a 24k -application audio \
+    -f segment -segment_time 3600 -reset_timestamps 1 -strftime 1 \
+    ${DATA_DIR}/recordings/%%Y-%%m-%%dT%%H-%%M-%%S.opus
+# ffmpeg finalizes the current segment on SIGINT, then exits 255
+KillSignal=SIGINT
+SuccessExitStatus=255
+Restart=on-failure
+RestartSec=10
+# No RuntimeMaxSec: snore-analyze stops this at 08:30 (Conflicts=), and a
+# timeout would count as a failure and trigger Restart=.

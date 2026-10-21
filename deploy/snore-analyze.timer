@@ -1,0 +1,9 @@
+[Unit]
+Description=Analyze last night's snoring each morning
+
+[Timer]
+OnCalendar=*-*-* 08:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
