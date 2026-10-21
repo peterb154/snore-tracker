@@ -1,0 +1,11 @@
+[Unit]
+Description=Snore tracker: pull latest code (no inbound deploy endpoint on this Pi)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/snore-tracker
+ExecStart=/usr/bin/git pull --ff-only
+ExecStart=/home/pi/.local/bin/uv sync --frozen --no-dev
