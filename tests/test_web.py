@@ -147,8 +147,8 @@ SNORE = {"X-Snore": "1"}
 def test_record_start_stop_targets_only_the_recorder(client, calls, monkeypatch, action):
     def fake(*args):
         calls.append(args)
-        # snore-analyze is not running
-        return subprocess.CompletedProcess(args, 3 if args[0] == "is-active" else 0, "", "")
+        out = "inactive\n" if args[0] == "is-active" else ""  # snore-analyze not running
+        return subprocess.CompletedProcess(args, 0, out, "")
 
     monkeypatch.setattr(web, "systemctl", fake)
     assert client.post(f"/api/record/{action}", headers=SNORE).status_code == 200
@@ -160,8 +160,15 @@ def test_record_needs_the_custom_header(client, calls):
     assert calls == []
 
 
-def test_record_start_refused_while_analyzing(client, calls):
-    # the calls fixture reports every unit active, including snore-analyze
+def test_record_start_refused_while_analyzing(client, calls, monkeypatch):
+    def fake(*args):
+        calls.append(args)
+        # A running oneshot is "activating" (exit 3), never "active"
+        if args[0] == "is-active":
+            return subprocess.CompletedProcess(args, 3, "activating\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(web, "systemctl", fake)
     assert client.post("/api/record/start", headers=SNORE).status_code == 409
     assert ("start", "snore-record.service") not in calls
 

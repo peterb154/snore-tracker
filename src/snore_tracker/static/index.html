@@ -220,7 +220,7 @@ async function loadClips() {
 async function record(action) {
   $("recerr").textContent = "";
   const res = await fetch(`/api/record/${action}`, { method: "POST", headers: { "X-Snore": "1" } });
-  if (!res.ok) $("recerr").textContent = (await res.json()).detail || res.statusText;
+  if (!res.ok) $("recerr").textContent = (await res.json().catch(() => ({}))).detail || res.statusText;
   refreshStatus();
 }
 $("start").onclick = () => record("start");

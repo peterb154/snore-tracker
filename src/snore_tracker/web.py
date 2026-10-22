@@ -34,6 +34,12 @@ def recording_state():
     return {"active": active, "started": int(started) if active and started else None}
 
 
+def analyzing():
+    """snore-analyze Conflicts= snore-record, so starting the recorder would kill it.
+    It's a oneshot: "activating" while it runs, never "active"."""
+    return systemctl("is-active", ANALYZE_UNIT).stdout.strip() in ("active", "activating")
+
+
 def next_timers():
     out = systemctl("list-timers", "--all", "-o", "json", *TIMERS).stdout
     timers = {t: None for t in TIMERS}
@@ -154,8 +160,7 @@ def create_app(cfg, reader):
             raise HTTPException(403, "missing X-Snore header")
         if action not in ("start", "stop"):
             raise HTTPException(404)
-        # snore-analyze Conflicts= snore-record, so a start would kill the morning analysis
-        if action == "start" and systemctl("is-active", "--quiet", ANALYZE_UNIT).returncode == 0:
+        if action == "start" and analyzing():
             raise HTTPException(409, "snore-analyze is running; try again when it finishes")
         result = systemctl(action, RECORD_UNIT)  # allowed by the polkit rule
         if result.returncode != 0:
