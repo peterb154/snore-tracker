@@ -16,13 +16,17 @@ echo "4d8b4a53282dc83ef04e3e7dbc4fbc98082e34e44ed798e16c3a0cdd4c584faf  models/y
 [ -f .env ] || { cp deploy/env.example .env; chmod 600 .env; echo "Created .env, edit it"; }
 
 sudo cp deploy/asound.conf /etc/asound.conf  # dsnoop "snoop": recorder + web UI share the mic
-sudo cp deploy/polkit/50-snore-record.rules /etc/polkit-1/rules.d/
+sudo rm -f /etc/polkit-1/rules.d/50-snore-record.rules  # renamed to 50-snore.rules
+sudo cp deploy/polkit/50-snore.rules /etc/polkit-1/rules.d/
+# The noon git pull is replaced by the n8n webhook (POST /api/deploy)
+sudo systemctl disable --now snore-update.timer 2>/dev/null || true
+sudo rm -f /etc/systemd/system/snore-update.service /etc/systemd/system/snore-update.timer
 sudo cp deploy/snore-*.service deploy/snore-*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 # Older installs enabled snore-record.service for boot resume; snore-record-boot does that now
 sudo systemctl disable snore-record.service 2>/dev/null || true
 sudo systemctl enable snore-record-boot.service  # boot-time resume, only inside the window
-sudo systemctl enable --now snore-record.timer snore-analyze.timer snore-update.timer
+sudo systemctl enable --now snore-record.timer snore-analyze.timer
 sudo systemctl enable snore-web.service
 sudo systemctl restart snore-web.service  # start, or pick up a changed unit or code
 systemctl list-timers 'snore-*'
