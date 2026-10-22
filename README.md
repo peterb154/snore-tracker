@@ -46,20 +46,24 @@ units: if a change touches `deploy/*` (units, `asound.conf`, polkit rule), re-ru
   `arecord -D snoop -f S16_LE -r 16000 -c 1 -d 5 a.wav & arecord -D snoop -f S16_LE -r 16000 -c 1 -d 5 b.wav`.
   If dsnoop rejects the rate, change `rate` in `asound.conf` to the card's native rate
   (`arecord -D hw:CARD=<name> --dump-hw-params`).
-- Gain: turn Auto Gain Control off (it lifts the noise floor in a quiet room), then set `Mic`
-  (0–16) while watching the web UI's level meter. Fake-snore at the pillow and aim for peaks
-  around −10 to −6 dBFS. `sudo alsactl store` keeps it across reboots.
-  ```bash
-  amixer -c Device sset 'Auto Gain Control' off
-  amixer -c Device sset Mic 8
-  ```
+- Set the gain with the web UI's **Tuning** slider (see [Web UI](#web-ui)).
 
 ## Web UI
 
 `snore-web.service` serves a single page on `:8000`: live waveform and level, the live YAMNet
 snore score with a 60 s sparkline, recording Start/Stop, segment/disk stats, last night's
 summary, and the next timer runs. The waveform and score work whether or not a recording is running.
-Fake-snore at the mic to pick a starting `SNORE_THRESHOLD`.
+
+**Tuning** has two sliders, applied when you let go:
+
+- **Mic gain** (0–16) runs `amixer -c $SNORE_CARD sset Mic <n>` and turns Auto Gain Control off,
+  since AGC lifts the noise floor in a quiet room. Fake-snore at the pillow and aim for peaks
+  around −10 to −6 dBFS.
+- **Threshold** moves the line on the score chart at once and is used by the next morning's
+  analysis.
+
+Both are saved to `~/snore-data/settings.json`, which wins over `.env`. `snore-web` re-applies
+the gain at startup, so there's no `sudo alsactl store`.
 
 The score is YAMNet's 0–1 confidence for its "Snoring" class over each ~1 s window: higher means
 more snore-like. The nightly analysis takes each minute's peak score, and a minute counts as
@@ -77,11 +81,13 @@ from what your own snoring scores.
 
 ## Tuning
 
-The settings are in `.env` (see `deploy/env.example`):
+Gain and threshold are set in the web UI (above). The rest are in `.env`
+(see `deploy/env.example`):
 
 | Var | Default | Meaning |
 |---|---|---|
-| `SNORE_THRESHOLD` | 0.5 | a minute counts as snoring if its peak YAMNet "Snoring" score ≥ this |
+| `SNORE_THRESHOLD` | 0.5 | a minute counts as snoring if its peak YAMNet "Snoring" score ≥ this (the UI's value wins) |
+| `SNORE_CARD` | Device | ALSA card the gain slider controls |
 | `MIN_EVENT_MINUTES` | 2 | shortest run of snoring minutes that counts as an event |
 | `MAX_GAP_MINUTES` | 1 | quiet minutes bridged inside one event |
 | `LOUD_DB` / `DB_OFFSET` | -20 / 0 | dB is dBFS (uncalibrated) + offset |

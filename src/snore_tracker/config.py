@@ -1,5 +1,10 @@
-"""Settings, read from env vars (systemd loads them from .env)."""
+"""Settings, read from env vars (systemd loads them from .env), then settings.json.
 
+The web UI writes <data_dir>/settings.json (gain, threshold). It wins over .env, so a value
+tuned from the UI is the one the morning analysis uses.
+"""
+
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +28,10 @@ class Config:
     )
     # ALSA capture device. "snoop" (deploy/asound.conf) lets the recorder and web UI share it.
     mic: str = field(default_factory=lambda: _env("SNORE_MIC", "default"))
+    # ALSA card for amixer (the word in [brackets] from `arecord -l`), and its Mic capture
+    # gain. None leaves the mixer alone.
+    card: str = field(default_factory=lambda: _env("SNORE_CARD", "Device"))
+    gain: int | None = field(default_factory=lambda: _env("SNORE_GAIN", None, int))
     # Must match the watch: minute keys are local wall-clock time, like Garmin's.
     tz: ZoneInfo = field(default_factory=lambda: ZoneInfo(_env("LOCAL_TZ", "America/Chicago")))
     # A minute counts as snoring when its peak YAMNet "Snoring" score reaches this.
@@ -41,6 +50,16 @@ class Config:
         default_factory=lambda: _env("SNORE_API", "https://fitness.epetersons.com/api/snore")
     )
     token: str = field(default_factory=lambda: _env("SNORE_TOKEN", ""))
+
+    def __post_init__(self):
+        if self.settings_file.exists():
+            saved = json.loads(self.settings_file.read_text())
+            self.gain = saved.get("gain", self.gain)
+            self.threshold = saved.get("threshold", self.threshold)
+
+    @property
+    def settings_file(self):
+        return self.data_dir / "settings.json"
 
     @property
     def recordings(self):
