@@ -8,11 +8,14 @@ night. The results go to [garmin_connect](https://github.com/peterb154/garmin_co
 ```
 20:30  snore-record.timer   ffmpeg → ~/snore-data/recordings/<start>.opus (hourly, 16 kHz, 24 kbps)
 08:30  snore-analyze.timer  stop recording → YAMNet → nights/<date>.json + clips → POST
-12:00  snore-update.timer   git pull --ff-only && uv sync (deploys = merge to main)
+12:00  snore-update.timer   git pull --ff-only && uv sync, restart snore-web (deploys = merge to main)
+always snore-web.service    web UI on :8000 (https://snore.epetersons.com, LAN-only)
 ```
 
-**Privacy:** no audio leaves the Pi. Full-night audio is deleted once it's analyzed. One 10 s
-clip per event is kept for 14 days, so detections can be checked by ear.
+**Privacy:** full-night audio never leaves the Pi and is deleted once it's analyzed. One 10 s
+clip per event is kept for 14 days, so detections can be checked by ear. The web UI streams
+levels and scores, never raw audio. Clips can be played over the LAN **only while
+`~/snore-data/.clip-playback` exists** (see [Web UI](#web-ui)).
 
 ## Setup (Pi)
 
@@ -26,15 +29,36 @@ nano ~/snore-tracker/.env           # SNORE_MIC, SNORE_TOKEN
 ```
 
 Deploys are pull-based. The Pi picks up `main` at 12:00 each day (`journalctl -u snore-update`).
-It has no inbound deploy endpoint, because it runs no web server. If a change touches
-`deploy/*.service` or `*.timer`, re-run `deploy/install.sh`.
+There's no inbound deploy endpoint; the web UI is LAN-only and can't deploy. If a change touches
+`deploy/*` (units, `asound.conf`, polkit rule), re-run `deploy/install.sh`.
 
 ## Mic
 
 - Put it near the headboard, about 1 m from the sleeper's head, away from fans and vents.
-- Find the device: `arecord -L`, then set `SNORE_MIC=plughw:CARD=<name>,DEV=0`.
-- Check the level: run `arecord -D <mic> -f S16_LE -r 16000 -d 10 test.wav`, then
-  `alsamixer` (F6 → mic). Normal speech at the pillow should be well under clipping.
+- The recorder and web UI share the mic through the ALSA `dsnoop` PCM `snoop`
+  (`deploy/asound.conf` → `/etc/asound.conf`). Find the card name with `arecord -l` (the word in
+  `[brackets]`), put it in `hw:CARD=<name>,DEV=0` there, and keep `SNORE_MIC=snoop` in `.env`.
+- Check that two readers work at once:
+  `arecord -D snoop -f S16_LE -r 16000 -c 1 -d 5 a.wav & arecord -D snoop -f S16_LE -r 16000 -c 1 -d 5 b.wav`.
+  If dsnoop rejects the rate, change `rate` in `asound.conf` to the card's native rate
+  (`arecord -D hw:CARD=<name> --dump-hw-params`).
+- Set the gain in the web UI's level meter, or with `alsamixer` (F6 → mic). Normal speech at the
+  pillow should be well under clipping.
+
+## Web UI
+
+`snore-web.service` serves a single page on `:8000`: live waveform and level, the live YAMNet
+snore score with a 60 s sparkline, recording Start/Stop, segment/disk stats, last night's
+summary, and the next timer runs. The waveform and score work whether or not a recording is running.
+Fake-snore at the mic to pick a starting `SNORE_THRESHOLD`.
+
+- **Start/Stop** runs `systemctl start|stop snore-record.service` as `pi`, allowed by
+  `deploy/polkit/50-snore-record.rules` (that one unit only). A daytime test recording is
+  grouped into the *next* night by `night_of()`, so only Start when you mean it.
+- **Clip playback** is off by default. `touch ~/snore-data/.clip-playback` turns it on and `rm`
+  turns it off; there's no restart. While it's off, `/api/clips` and `/clips/*` return 404.
+- No auth: LAN-only through NPM (`snore.epetersons.com` → `192.168.0.14:8000`), like `fitness`.
+- Logs: `journalctl -u snore-web -f`.
 
 ## Tuning
 
