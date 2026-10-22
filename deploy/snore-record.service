@@ -5,9 +5,7 @@ After=sound.target time-sync.target
 [Service]
 User=pi
 EnvironmentFile=/home/pi/snore-tracker/.env
-# Also starts at boot, so a power blip mid-night resumes recording. Only inside the
-# window, which must match snore-record.timer (20:30) and snore-analyze.timer (08:30).
-ExecCondition=/bin/sh -c 'h=$$(date +%%H%%M); [ "$$h" -ge 2030 ] || [ "$$h" -lt 830 ]'
+# Started by snore-record.timer, snore-record-boot.service (mid-night reboot) or the web UI.
 ExecStartPre=/usr/bin/mkdir -p ${DATA_DIR}/recordings
 # %% is a literal % in systemd. Hourly segments, so a crash loses at most an hour.
 ExecStart=/usr/bin/ffmpeg -nostdin -hide_banner -loglevel warning \
@@ -22,6 +20,3 @@ Restart=on-failure
 RestartSec=10
 # No RuntimeMaxSec: snore-analyze stops this at 08:30 (Conflicts=), and a
 # timeout would count as a failure and trigger Restart=.
-
-[Install]
-WantedBy=multi-user.target

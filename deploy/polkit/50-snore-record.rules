@@ -1,0 +1,8 @@
+// Lets snore-web (User=pi) start/stop the recorder, and nothing else.
+polkit.addRule(function (action, subject) {
+  if (action.id == "org.freedesktop.systemd1.manage-units" &&
+      action.lookup("unit") == "snore-record.service" &&
+      subject.user == "pi") {
+    return polkit.Result.YES;
+  }
+});
