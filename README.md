@@ -30,8 +30,9 @@ nano ~/snore-tracker/.env           # SNORE_MIC, SNORE_TOKEN, DEPLOY_TOKEN
 Deploys work like every other app in `local_network`: a push to `main` fires the n8n
 *Deploy: snore-tracker* workflow, which calls `POST /api/deploy` with `DEPLOY_TOKEN`. That runs
 `git pull --ff-only`, `uv sync --frozen --no-dev` and restarts `snore-web`; n8n emails on failure.
-It returns 409 while `snore-analyze` is running (a recording is unaffected).
-`curl https://snore.epetersons.com/api/health` shows the deployed commit. Deploys never touch
+It returns 409 while `snore-analyze` or another deploy is running (a recording is unaffected);
+avoid pushing right before 08:30, since analysis can still start mid-sync.
+`curl https://snore.epetersons.com/api/health` shows the commit `snore-web` is running. Deploys never touch
 units: if a change touches `deploy/*` (units, `asound.conf`, polkit rule), re-run
 `deploy/install.sh`.
 

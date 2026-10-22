@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -22,6 +23,8 @@ TIMERS = ["snore-record.timer", "snore-analyze.timer"]
 PROJECT_DIR = os.environ.get("DEPLOY_PROJECT_DIR", "/home/pi/snore-tracker")
 # systemd's PATH lacks ~/.local/bin, so a bare "uv" isn't found (this bit fitness)
 UV_BIN = os.environ.get("UV_BIN", "/home/pi/.local/bin/uv")
+# Two pushes (or an n8n retry) must not pull/sync the same checkout at once
+DEPLOY_LOCK = threading.Lock()
 INDEX = Path(__file__).parent / "static" / "index.html"
 TOO_HOT_DB = -3
 TOO_QUIET_DB = -45
@@ -169,16 +172,23 @@ def deploy_steps():
 
 
 def restart_web():
-    # allowed by the polkit rule; systemd finishes the job after this process exits
+    # allowed by the polkit rule; --no-block: queue the job, don't wait to be killed by it
     subprocess.Popen(
-        ["systemctl", "restart", WEB_UNIT],
+        ["systemctl", "--no-block", "restart", WEB_UNIT],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
 
+def busy(reason):
+    check = {"step": "check", "status": "error", "output": reason}
+    return JSONResponse({"status": "error", "results": [check]}, status_code=409)
+
+
 def create_app(cfg, reader):
     app = FastAPI()
+    # Read once: what this process loaded, not what a later pull left on disk
+    commit = git_commit()
 
     def require_clips():
         if not clips_enabled(cfg):  # checked per request: touch/rm the flag, no restart
@@ -217,24 +227,29 @@ def create_app(cfg, reader):
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "commit": git_commit()}
+        return {"status": "ok", "commit": commit}
 
     @app.post("/api/deploy")
     def deploy(tasks: BackgroundTasks, authorization: str = Header("")):
         token = os.environ.get("DEPLOY_TOKEN", "")
         if not token:
             raise HTTPException(503, "DEPLOY_TOKEN not configured")
-        if not hmac.compare_digest(authorization, f"Bearer {token}"):
+        # bytes: compare_digest raises TypeError on non-ASCII str
+        if not hmac.compare_digest(authorization.encode(), f"Bearer {token}".encode()):
             raise HTTPException(401, "invalid deploy token")
-        if analyzing():
-            # Swapping packages under the running analysis could break it
-            busy = {"step": "check", "status": "error", "output": "snore-analyze is running"}
-            return JSONResponse({"status": "error", "results": [busy]}, status_code=409)
-        results = []
-        for label, cmd, timeout in deploy_steps():
-            results.append(run_step(label, cmd, timeout))
-            if results[-1]["status"] != "ok":
-                return {"status": "error", "results": results}
+        if not DEPLOY_LOCK.acquire(blocking=False):
+            return busy("another deploy is running")
+        try:
+            if analyzing():
+                # Swapping packages under the running analysis could break it
+                return busy("snore-analyze is running")
+            results = []
+            for label, cmd, timeout in deploy_steps():
+                results.append(run_step(label, cmd, timeout))
+                if results[-1]["status"] != "ok":
+                    return {"status": "error", "results": results}
+        finally:
+            DEPLOY_LOCK.release()
         tasks.add_task(restart_web)  # runs after the response is sent
         results.append({"step": f"systemctl restart {WEB_UNIT}", "status": "ok", "output": ""})
         return {"status": "ok", "results": results}
