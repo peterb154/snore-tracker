@@ -46,8 +46,13 @@ units: if a change touches `deploy/*` (units, `asound.conf`, polkit rule), re-ru
   `arecord -D snoop -f S16_LE -r 16000 -c 1 -d 5 a.wav & arecord -D snoop -f S16_LE -r 16000 -c 1 -d 5 b.wav`.
   If dsnoop rejects the rate, change `rate` in `asound.conf` to the card's native rate
   (`arecord -D hw:CARD=<name> --dump-hw-params`).
-- Set the gain in the web UI's level meter, or with `alsamixer` (F6 → mic). Normal speech at the
-  pillow should be well under clipping.
+- Gain: turn Auto Gain Control off (it lifts the noise floor in a quiet room), then set `Mic`
+  (0–16) while watching the web UI's level meter. Fake-snore at the pillow and aim for peaks
+  around −10 to −6 dBFS. `sudo alsactl store` keeps it across reboots.
+  ```bash
+  amixer -c Device sset 'Auto Gain Control' off
+  amixer -c Device sset Mic 8
+  ```
 
 ## Web UI
 
@@ -55,6 +60,11 @@ units: if a change touches `deploy/*` (units, `asound.conf`, polkit rule), re-ru
 snore score with a 60 s sparkline, recording Start/Stop, segment/disk stats, last night's
 summary, and the next timer runs. The waveform and score work whether or not a recording is running.
 Fake-snore at the mic to pick a starting `SNORE_THRESHOLD`.
+
+The score is YAMNet's 0–1 confidence for its "Snoring" class over each ~1 s window: higher means
+more snore-like. The nightly analysis takes each minute's peak score, and a minute counts as
+snoring at or above `SNORE_THRESHOLD`. Real snores often score below 1.0, so set the threshold
+from what your own snoring scores.
 
 - **Start/Stop** runs `systemctl start|stop snore-record.service` as `pi`, allowed by
   `deploy/polkit/50-snore.rules` (that unit, plus `snore-web.service` for deploys). A daytime
