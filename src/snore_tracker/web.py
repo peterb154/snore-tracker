@@ -281,7 +281,9 @@ def main():
         model = Yamnet(cfg.model_path)
     reader = LiveReader(cfg.mic, model)
     reader.start()
-    uvicorn.run(create_app(cfg, reader), host="0.0.0.0", port=8000)
+    # An open page holds /api/live forever; without a cap, a deploy restart waits out
+    # systemd's 90 s stop timeout and gets SIGKILLed
+    uvicorn.run(create_app(cfg, reader), host="0.0.0.0", port=8000, timeout_graceful_shutdown=2)
 
 
 if __name__ == "__main__":
