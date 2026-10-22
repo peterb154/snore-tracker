@@ -21,6 +21,8 @@ class Config:
             "MODEL_PATH", HOME / "snore-tracker/models/yamnet.tflite", Path
         )
     )
+    # ALSA capture device. "snoop" (deploy/asound.conf) lets the recorder and web UI share it.
+    mic: str = field(default_factory=lambda: _env("SNORE_MIC", "default"))
     # Must match the watch: minute keys are local wall-clock time, like Garmin's.
     tz: ZoneInfo = field(default_factory=lambda: ZoneInfo(_env("LOCAL_TZ", "America/Chicago")))
     # A minute counts as snoring when its peak YAMNet "Snoring" score reaches this.
