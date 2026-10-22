@@ -6,15 +6,22 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "ai-edge-litert>=2.0",
+    "fastapi>=0.159.1",
     "numpy>=2.0",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
 snore-analyze = "snore_tracker.analyze:main"
 snore-post = "snore_tracker.post:main"
+snore-web = "snore_tracker.web:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = [
+    "httpx2>=2.16.0",
+    "pytest>=8",
+    "ruff>=0.6",
+]
 
 [build-system]
 requires = ["hatchling"]

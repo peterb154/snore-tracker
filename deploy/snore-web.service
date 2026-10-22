@@ -1,0 +1,14 @@
+[Unit]
+Description=Snore tracker: web UI on :8000 (live waveform + score, start/stop, stats)
+After=sound.target network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+EnvironmentFile=/home/pi/snore-tracker/.env
+ExecStart=/home/pi/snore-tracker/.venv/bin/snore-web
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

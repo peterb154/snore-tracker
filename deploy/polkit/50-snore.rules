@@ -1,0 +1,9 @@
+// Lets snore-web (User=pi) start/stop the recorder and restart itself on deploy, and nothing else.
+polkit.addRule(function (action, subject) {
+  var unit = action.lookup("unit");
+  if (action.id == "org.freedesktop.systemd1.manage-units" &&
+      (unit == "snore-record.service" || unit == "snore-web.service") &&
+      subject.user == "pi") {
+    return polkit.Result.YES;
+  }
+});

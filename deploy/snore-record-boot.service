@@ -1,0 +1,13 @@
+[Unit]
+Description=Snore tracker: resume recording after a mid-night reboot
+After=sound.target time-sync.target
+
+[Service]
+Type=oneshot
+# Only inside the window, which must match snore-record.timer (20:30) and
+# snore-analyze.timer (08:30). snore-record itself has no window, so the web UI can start it.
+ExecCondition=/bin/sh -c 'h=$$(date +%%H%%M); [ "$$h" -ge 2030 ] || [ "$$h" -lt 830 ]'
+ExecStart=/bin/systemctl start --no-block snore-record.service
+
+[Install]
+WantedBy=multi-user.target

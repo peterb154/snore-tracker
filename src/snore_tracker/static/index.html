@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snore Tracker</title>
+<style>
+  :root { --bg: #111; --card: #1c1c1c; --fg: #ddd; --dim: #888; --accent: #4fc3f7; --hot: #ef5350; --ok: #66bb6a; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; display: grid; gap: 12px; }
+  section { background: var(--card); border-radius: 8px; padding: 12px 14px; }
+  h1 { font-size: 20px; margin: 0; display: flex; justify-content: space-between; align-items: center; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 0 0 8px; }
+  canvas { width: 100%; display: block; }
+  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .big { font-size: 40px; font-variant-numeric: tabular-nums; min-width: 3.2ch; }
+  .dim { color: var(--dim); }
+  .bar { flex: 1; min-width: 160px; height: 14px; background: #333; border-radius: 7px; position: relative; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; }
+  .bar > i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+  dt { color: var(--dim); }
+  dd { margin: 0; font-variant-numeric: tabular-nums; }
+  button { font: inherit; padding: 6px 16px; border-radius: 6px; border: 0; cursor: pointer; }
+  #start { background: var(--ok); } #stop { background: var(--hot); }
+  button:disabled { opacity: .4; cursor: default; }
+  .live { font-size: 13px; color: var(--dim); } .live.on { color: var(--ok); }
+  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+  audio { width: 100%; height: 32px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Snore Tracker <span id="live" class="live">● offline</span></h1>
+
+  <section>
+    <h2>Waveform</h2>
+    <canvas id="wave" height="120"></canvas>
+    <div class="row" style="margin-top:8px">
+      <span>Level <b id="db">–</b> dBFS, 10 s peak <b id="peak">–</b></span>
+      <span id="hint"></span>
+      <div class="bar"><div id="levelbar"></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Snore score (YAMNet)</h2>
+    <div class="row">
+      <span class="big" id="score">–</span>
+      <div class="bar"><div id="scorebar"></div><i id="threshold"></i></div>
+    </div>
+    <canvas id="spark" height="60" style="margin-top:8px"></canvas>
+    <div class="dim" style="font-size:13px">last 60 s · line = SNORE_THRESHOLD</div>
+  </section>
+
+  <section>
+    <h2>Recording</h2>
+    <div class="row" style="margin-bottom:8px">
+      <b id="recstate">–</b>
+      <button id="start">Start</button>
+      <button id="stop">Stop</button>
+      <span id="recerr" style="color:var(--hot)"></span>
+    </div>
+    <dl>
+      <dt>Started</dt><dd id="started">–</dd>
+      <dt>Elapsed</dt><dd id="elapsed">–</dd>
+      <dt>Segments</dt><dd id="segments">–</dd>
+      <dt>Current</dt><dd id="current">–</dd>
+      <dt>Disk free</dt><dd id="disk">–</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Last night</h2>
+    <dl id="lastnight"><dt>–</dt><dd></dd></dl>
+  </section>
+
+  <section>
+    <h2>Next runs</h2>
+    <dl id="timers"></dl>
+  </section>
+
+  <section id="clips" hidden>
+    <h2>Event clips</h2>
+    <ul id="cliplist"></ul>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const WAVE_SLICES = 200;   // 10 s of 50 ms slices
+const SPARK_POINTS = 62;   // 60 s of 0.975 s windows
+const wave = [], spark = [];
+let threshold = 0.5, peak = null;
+
+function fitCanvas(c) {
+  const r = window.devicePixelRatio || 1;
+  c.width = c.clientWidth * r;
+  c.height = c.clientHeight * r;
+}
+
+function drawWave() {
+  const c = $("wave"), g = c.getContext("2d"), w = c.width, h = c.height, mid = h / 2;
+  g.clearRect(0, 0, w, h);
+  const bw = w / WAVE_SLICES;
+  wave.forEach((s, i) => {
+    const x = w - (wave.length - i) * bw;
+    g.fillStyle = Math.max(-s.min, s.max) > 0.7 ? "#ef5350" : "#4fc3f7";
+    g.fillRect(x, mid - s.max * mid, Math.max(bw - 0.5, 1), Math.max((s.max - s.min) * mid, 1));
+  });
+}
+
+function drawSpark() {
+  const c = $("spark"), g = c.getContext("2d"), w = c.width, h = c.height;
+  g.clearRect(0, 0, w, h);
+  g.strokeStyle = "#888"; g.setLineDash([4, 4]);
+  g.beginPath(); g.moveTo(0, h - threshold * h); g.lineTo(w, h - threshold * h); g.stroke();
+  g.setLineDash([]); g.strokeStyle = "#4fc3f7"; g.lineWidth = 2;
+  g.beginPath();
+  spark.forEach((v, i) => {
+    const x = w - (spark.length - 1 - i) * (w / (SPARK_POINTS - 1)), y = h - v * h;
+    i ? g.lineTo(x, y) : g.moveTo(x, y);
+  });
+  g.stroke();
+}
+
+function showLevel(db, peak) {
+  $("db").textContent = db ?? "–";
+  $("peak").textContent = peak ?? "–";
+  // -60..0 dBFS across the bar
+  $("levelbar").style.width = db == null ? 0 : Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + "%";
+}
+
+function connect() {
+  const es = new EventSource("/api/live");
+  es.onopen = () => { $("live").textContent = "● live"; $("live").className = "live on"; };
+  es.onerror = () => { $("live").textContent = "● offline"; $("live").className = "live"; };
+  es.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "wave") {
+      wave.push(m);
+      if (wave.length > WAVE_SLICES) wave.shift();
+    } else if (m.t === "score") {
+      showLevel(m.db, peak);
+      if (m.score != null) {
+        $("score").textContent = m.score.toFixed(2);
+        $("scorebar").style.width = m.score * 100 + "%";
+        $("scorebar").style.background = m.score >= threshold ? "#ef5350" : "#4fc3f7";
+        spark.push(m.score);
+        if (spark.length > SPARK_POINTS) spark.shift();
+        drawSpark();
+      } else {
+        $("score").textContent = "n/a";
+      }
+    }
+  };
+}
+
+const fmtTime = (unix) => unix ? new Date(unix * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "–";
+const fmtDur = (s) => s == null ? "–" : `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`;
+
+function dl(el, pairs) {
+  el.replaceChildren(...pairs.flatMap(([k, v]) => {
+    const dt = document.createElement("dt"), dd = document.createElement("dd");
+    dt.textContent = k; dd.textContent = v;
+    return [dt, dd];
+  }));
+}
+
+async function refreshStatus() {
+  let s;
+  try { s = await (await fetch("/api/status")).json(); } catch { return; }
+  threshold = s.threshold;
+  $("threshold").style.left = threshold * 100 + "%";
+
+  const r = s.recording;
+  $("recstate").textContent = r.active ? "● recording" : "stopped";
+  $("recstate").style.color = r.active ? "#ef5350" : "";
+  $("start").disabled = r.active; $("stop").disabled = !r.active;
+  $("started").textContent = fmtTime(r.started);
+  $("elapsed").textContent = fmtDur(r.elapsed);
+  $("segments").textContent = `${r.count} (${r.mb} MB)`;
+  $("current").textContent = r.current ?? "–";
+  $("disk").textContent = `${s.disk_free_gb} GB`;
+
+  peak = s.level.peak_db;
+  showLevel(s.level.db, peak);
+  $("hint").textContent = s.level.hint && s.level.hint !== "ok" ? s.level.hint : "";
+  $("hint").style.color = s.level.hint === "too hot" ? "#ef5350" : "#ffb74d";
+
+  const n = s.last_night;
+  dl($("lastnight"), n ? [
+    ["Night", `${n.night} ${n.posted ? "✓ posted" : "(not posted)"}`],
+    ["Snoring", `${n.summary.snore_minutes} min (${n.summary.snore_pct}%)`],
+    ["Events", `${n.summary.events} (${n.summary.loud_events} loud)`],
+    ["Max dB", n.summary.max_db ?? "–"],
+  ] : [["–", "no nights yet"]]);
+
+  dl($("timers"), Object.entries(s.timers).map(([t, next]) => [t.replace(".timer", ""), next ? fmtTime(next) : "not scheduled"]));
+
+  $("clips").hidden = !s.clip_playback;
+  if (s.clip_playback && !$("cliplist").childElementCount) loadClips();
+  if (!s.clip_playback) $("cliplist").replaceChildren();
+}
+
+async function loadClips() {
+  const res = await fetch("/api/clips");
+  if (!res.ok) return;
+  const items = (await res.json()).map((c) => {
+    const li = document.createElement("li"), label = document.createElement("div"), a = document.createElement("audio");
+    label.textContent = `${c.start.replace("T", " ")} · ${c.minutes} min · score ${c.peak_score ?? "–"} · ${c.peak_db} dB`;
+    a.controls = true; a.preload = "none"; a.src = c.url;
+    li.append(label, a);
+    return li;
+  });
+  if (!items.length) items.push(Object.assign(document.createElement("li"), { className: "dim", textContent: "no clips" }));
+  $("cliplist").replaceChildren(...items);
+}
+
+async function record(action) {
+  $("recerr").textContent = "";
+  const res = await fetch(`/api/record/${action}`, { method: "POST", headers: { "X-Snore": "1" } });
+  if (!res.ok) $("recerr").textContent = (await res.json().catch(() => ({}))).detail || res.statusText;
+  refreshStatus();
+}
+$("start").onclick = () => record("start");
+$("stop").onclick = () => record("stop");
+
+function resize() { fitCanvas($("wave")); fitCanvas($("spark")); drawSpark(); }
+window.addEventListener("resize", resize);
+resize();
+(function frame() { drawWave(); requestAnimationFrame(frame); })();
+connect();
+refreshStatus();
+setInterval(refreshStatus, 5000);
+</script>
+</body>
+</html>
