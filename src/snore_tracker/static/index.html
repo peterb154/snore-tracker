@@ -213,12 +213,13 @@ async function loadClips() {
     li.append(label, a);
     return li;
   });
+  if (!items.length) items.push(Object.assign(document.createElement("li"), { className: "dim", textContent: "no clips" }));
   $("cliplist").replaceChildren(...items);
 }
 
 async function record(action) {
   $("recerr").textContent = "";
-  const res = await fetch(`/api/record/${action}`, { method: "POST" });
+  const res = await fetch(`/api/record/${action}`, { method: "POST", headers: { "X-Snore": "1" } });
   if (!res.ok) $("recerr").textContent = (await res.json()).detail || res.statusText;
   refreshStatus();
 }

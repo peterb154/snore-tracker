@@ -4,6 +4,7 @@ import json
 import subprocess
 import threading
 import time
+import traceback
 from collections import deque
 
 import numpy as np
@@ -45,8 +46,8 @@ class LiveReader:
         while True:
             try:
                 self._read()
-            except Exception as e:  # keep the web UI up if the mic is unplugged
-                print(f"live reader: {e}", flush=True)
+            except Exception:  # keep the web UI up if the mic is unplugged
+                traceback.print_exc()
             self.live = False
             time.sleep(5)
 
@@ -75,8 +76,9 @@ class LiveReader:
     def _score(self, window):
         db = round(audio.dbfs(window), 1)
         score = round(self.model.snore_score(window), 3) if self.model else None
-        self.recent_db.append(db)
-        self.last = {"db": db, "score": score}
+        with self.cond:  # level() reads these from request threads
+            self.recent_db.append(db)
+            self.last = {"db": db, "score": score}
         self._publish({"t": "score", "db": db, "score": score})
 
     def _publish(self, msg):
@@ -86,12 +88,13 @@ class LiveReader:
             self.cond.notify_all()
 
     def level(self):
-        return {
-            "live": self.live,
-            "db": self.last["db"],
-            "peak_db": max(self.recent_db, default=None),
-            "score": self.last["score"],
-        }
+        with self.cond:
+            return {
+                "live": self.live,
+                "db": self.last["db"],
+                "peak_db": max(self.recent_db, default=None),
+                "score": self.last["score"],
+            }
 
     def events(self, timeout=15):
         """SSE stream. Starlette runs this sync generator in a worker thread."""

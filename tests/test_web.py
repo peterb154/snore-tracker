@@ -123,12 +123,58 @@ def test_clip_path_rejects_escape(cfg):
     assert web.clip_path(cfg, "2026-10-21", "02-12-31.opus") is not None
 
 
+def test_next_timers_parses_list_timers_json(monkeypatch):
+    out = json.dumps(
+        [
+            {"next": 1792688400000000, "unit": "snore-update.timer"},
+            {"next": 0, "unit": "snore-analyze.timer"},
+        ]
+    )
+    monkeypatch.setattr(
+        web, "systemctl", lambda *a: subprocess.CompletedProcess(a, 0, stdout=out, stderr="")
+    )
+    assert web.next_timers() == {
+        "snore-record.timer": None,  # disabled timers aren't listed
+        "snore-analyze.timer": None,
+        "snore-update.timer": 1792688400,
+    }
+
+
+SNORE = {"X-Snore": "1"}
+
+
 @pytest.mark.parametrize("action", ["start", "stop"])
-def test_record_start_stop_targets_only_the_recorder(client, calls, action):
-    assert client.post(f"/api/record/{action}").status_code == 200
-    assert calls[0] == (action, "snore-record.service")
+def test_record_start_stop_targets_only_the_recorder(client, calls, monkeypatch, action):
+    def fake(*args):
+        calls.append(args)
+        # snore-analyze is not running
+        return subprocess.CompletedProcess(args, 3 if args[0] == "is-active" else 0, "", "")
+
+    monkeypatch.setattr(web, "systemctl", fake)
+    assert client.post(f"/api/record/{action}", headers=SNORE).status_code == 200
+    assert (action, "snore-record.service") in calls
+
+
+def test_record_needs_the_custom_header(client, calls):
+    assert client.post("/api/record/start").status_code == 403
+    assert calls == []
+
+
+def test_record_start_refused_while_analyzing(client, calls):
+    # the calls fixture reports every unit active, including snore-analyze
+    assert client.post("/api/record/start", headers=SNORE).status_code == 409
+    assert ("start", "snore-record.service") not in calls
 
 
 def test_record_rejects_other_actions(client, calls):
-    assert client.post("/api/record/restart").status_code == 404
+    assert client.post("/api/record/restart", headers=SNORE).status_code == 404
     assert calls == []
+
+
+def test_live_is_not_buffered_by_the_proxy(cfg):
+    class OneShot(FakeReader):
+        def events(self):
+            yield "data: {}\n\n"
+
+    resp = TestClient(web.create_app(cfg, OneShot())).get("/api/live")
+    assert resp.headers["x-accel-buffering"] == "no"

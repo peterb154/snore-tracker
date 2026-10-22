@@ -6,13 +6,14 @@ import subprocess
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
 from snore_tracker.config import Config
 from snore_tracker.live import LiveReader
 
 RECORD_UNIT = "snore-record.service"
+ANALYZE_UNIT = "snore-analyze.service"
 TIMERS = ["snore-record.timer", "snore-analyze.timer", "snore-update.timer"]
 INDEX = Path(__file__).parent / "static" / "index.html"
 TOO_HOT_DB = -3
@@ -139,12 +140,23 @@ def create_app(cfg, reader):
 
     @app.get("/api/live")
     def live():
-        return StreamingResponse(reader.events(), media_type="text/event-stream")
+        return StreamingResponse(
+            reader.events(),
+            media_type="text/event-stream",
+            # NPM (nginx) buffers proxied responses by default, which batches SSE
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.post("/api/record/{action}")
-    def record(action: str):
+    def record(action: str, x_snore: str | None = Header(None)):
+        # A custom header forces a CORS preflight, so another site's page can't press Start
+        if x_snore != "1":
+            raise HTTPException(403, "missing X-Snore header")
         if action not in ("start", "stop"):
             raise HTTPException(404)
+        # snore-analyze Conflicts= snore-record, so a start would kill the morning analysis
+        if action == "start" and systemctl("is-active", "--quiet", ANALYZE_UNIT).returncode == 0:
+            raise HTTPException(409, "snore-analyze is running; try again when it finishes")
         result = systemctl(action, RECORD_UNIT)  # allowed by the polkit rule
         if result.returncode != 0:
             raise HTTPException(500, result.stderr.strip())
