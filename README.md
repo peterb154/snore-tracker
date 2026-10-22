@@ -8,7 +8,6 @@ night. The results go to [garmin_connect](https://github.com/peterb154/garmin_co
 ```
 20:30  snore-record.timer   ffmpeg → ~/snore-data/recordings/<start>.opus (hourly, 16 kHz, 24 kbps)
 08:30  snore-analyze.timer  stop recording → YAMNet → nights/<date>.json + clips → POST
-12:00  snore-update.timer   git pull --ff-only && uv sync, restart snore-web (deploys = merge to main)
 always snore-web.service    web UI on :8000 (https://snore.epetersons.com, LAN-only)
 ```
 
@@ -25,12 +24,17 @@ The timestamps have to match the watch.
 ```bash
 git clone https://github.com/peterb154/snore-tracker ~/snore-tracker
 ~/snore-tracker/deploy/install.sh   # uv, deps, model, systemd timers
-nano ~/snore-tracker/.env           # SNORE_MIC, SNORE_TOKEN
+nano ~/snore-tracker/.env           # SNORE_MIC, SNORE_TOKEN, DEPLOY_TOKEN
 ```
 
-Deploys are pull-based. The Pi picks up `main` at 12:00 each day (`journalctl -u snore-update`).
-There's no inbound deploy endpoint; the web UI is LAN-only and can't deploy. If a change touches
-`deploy/*` (units, `asound.conf`, polkit rule), re-run `deploy/install.sh`.
+Deploys work like every other app in `local_network`: a push to `main` fires the n8n
+*Deploy: snore-tracker* workflow, which calls `POST /api/deploy` with `DEPLOY_TOKEN`. That runs
+`git pull --ff-only`, `uv sync --frozen --no-dev` and restarts `snore-web`; n8n emails on failure.
+It returns 409 while `snore-analyze` or another deploy is running (a recording is unaffected);
+avoid pushing right before 08:30, since analysis can still start mid-sync.
+`curl https://snore.epetersons.com/api/health` shows the commit `snore-web` is running. Deploys never touch
+units: if a change touches `deploy/*` (units, `asound.conf`, polkit rule), re-run
+`deploy/install.sh`.
 
 ## Mic
 
@@ -53,11 +57,12 @@ summary, and the next timer runs. The waveform and score work whether or not a r
 Fake-snore at the mic to pick a starting `SNORE_THRESHOLD`.
 
 - **Start/Stop** runs `systemctl start|stop snore-record.service` as `pi`, allowed by
-  `deploy/polkit/50-snore-record.rules` (that one unit only). A daytime test recording is
-  grouped into the *next* night by `night_of()`, so only Start when you mean it.
+  `deploy/polkit/50-snore.rules` (that unit, plus `snore-web.service` for deploys). A daytime
+  test recording is grouped into the *next* night by `night_of()`, so only Start when you mean it.
 - **Clip playback** is off by default. `touch ~/snore-data/.clip-playback` turns it on and `rm`
   turns it off; there's no restart. While it's off, `/api/clips` and `/clips/*` return 404.
-- No auth: LAN-only through NPM (`snore.epetersons.com` → `192.168.0.14:8000`), like `fitness`.
+- No auth except on `/api/deploy`: LAN-only through NPM
+  (`snore.epetersons.com` → `192.168.0.14:8000`), like `fitness`.
 - Logs: `journalctl -u snore-web -f`.
 
 ## Tuning

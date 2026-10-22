@@ -126,7 +126,7 @@ def test_clip_path_rejects_escape(cfg):
 def test_next_timers_parses_list_timers_json(monkeypatch):
     out = json.dumps(
         [
-            {"next": 1792688400000000, "unit": "snore-update.timer"},
+            {"next": 1792688400000000, "unit": "snore-record.timer"},
             {"next": 0, "unit": "snore-analyze.timer"},
         ]
     )
@@ -134,9 +134,8 @@ def test_next_timers_parses_list_timers_json(monkeypatch):
         web, "systemctl", lambda *a: subprocess.CompletedProcess(a, 0, stdout=out, stderr="")
     )
     assert web.next_timers() == {
-        "snore-record.timer": None,  # disabled timers aren't listed
+        "snore-record.timer": 1792688400,
         "snore-analyze.timer": None,
-        "snore-update.timer": 1792688400,
     }
 
 
@@ -185,3 +184,98 @@ def test_live_is_not_buffered_by_the_proxy(cfg):
 
     resp = TestClient(web.create_app(cfg, OneShot())).get("/api/live")
     assert resp.headers["x-accel-buffering"] == "no"
+
+
+TOKEN = {"Authorization": "Bearer s3cret"}
+
+
+@pytest.fixture
+def deploy(monkeypatch, calls):
+    """Records git/uv runs and Popen restarts; snore-analyze idle unless a test says otherwise."""
+    monkeypatch.setenv("DEPLOY_TOKEN", "s3cret")
+    ran = {"run": [], "popen": [], "fail": None, "missing": None, "analyze": "inactive"}
+
+    def fake_run(cmd, **kw):
+        ran["run"].append(cmd)
+        if cmd[:2] == ["systemctl", "is-active"]:
+            return subprocess.CompletedProcess(cmd, 0, ran["analyze"] + "\n", "")
+        if cmd[0] == ran["missing"]:
+            raise FileNotFoundError(2, "No such file or directory", cmd[0])
+        code = 1 if ran["fail"] and ran["fail"] in cmd else 0
+        return subprocess.CompletedProcess(
+            cmd, code, ran.get("stdout", "out"), "err" if code else ""
+        )
+
+    monkeypatch.setattr(web.subprocess, "run", fake_run)
+    monkeypatch.setattr(web.subprocess, "Popen", lambda cmd, **kw: ran["popen"].append(cmd))
+    monkeypatch.setattr(web, "systemctl", lambda *a: fake_run(["systemctl", *a]))
+    return ran
+
+
+def test_deploy_503_without_a_token(client, deploy, monkeypatch):
+    monkeypatch.delenv("DEPLOY_TOKEN")
+    assert client.post("/api/deploy", headers=TOKEN).status_code == 503
+    assert deploy["run"] == []
+
+
+def test_deploy_401_with_a_wrong_token(client, deploy):
+    assert client.post("/api/deploy", headers={"Authorization": "Bearer nope"}).status_code == 401
+    assert client.post("/api/deploy").status_code == 401
+    assert deploy["run"] == []
+
+
+def test_deploy_409_while_analyzing(client, deploy):
+    deploy["analyze"] = "activating"  # a oneshot never reads "active"
+    r = client.post("/api/deploy", headers=TOKEN)
+    assert r.status_code == 409
+    assert r.json()["status"] == "error"
+    assert [c[0] for c in deploy["run"]] == ["systemctl"]  # no git, no uv
+    assert deploy["popen"] == []
+
+
+def test_deploy_stops_at_a_failed_pull(client, deploy):
+    deploy["fail"] = "pull"
+    r = client.post("/api/deploy", headers=TOKEN).json()
+    assert r["status"] == "error"
+    assert [s["step"] for s in r["results"]] == ["git pull"]
+    assert "out" in r["results"][0]["output"] and "err" in r["results"][0]["output"]
+    assert not any(c[0] == web.UV_BIN for c in deploy["run"])
+    assert deploy["popen"] == []
+
+
+def test_deploy_runs_the_steps_in_order(client, deploy):
+    r = client.post("/api/deploy", headers=TOKEN).json()
+    assert r["status"] == "ok"
+    steps = [c for c in deploy["run"] if c[0] != "systemctl"]
+    assert steps[0][-2:] == ["pull", "--ff-only"]
+    assert steps[1][0] == web.UV_BIN and "--frozen" in steps[1]
+    assert deploy["popen"] == [["systemctl", "--no-block", "restart", "snore-web.service"]]
+
+
+def test_deploy_reports_a_missing_uv(client, deploy):
+    deploy["missing"] = web.UV_BIN  # the fitness bug: uv not on systemd's PATH
+    r = client.post("/api/deploy", headers=TOKEN).json()
+    assert r["status"] == "error"
+    assert r["results"][-1]["step"] == "uv sync"
+    assert "FileNotFoundError" in r["results"][-1]["output"]
+    assert deploy["popen"] == []
+
+
+def test_deploy_409_while_another_deploy_runs(client, deploy):
+    with web.DEPLOY_LOCK:
+        r = client.post("/api/deploy", headers=TOKEN)
+    assert r.status_code == 409
+    assert deploy["run"] == []
+    assert client.post("/api/deploy", headers=TOKEN).json()["status"] == "ok"  # released
+
+
+def test_deploy_401_on_a_non_ascii_token(client, deploy):
+    r = client.post("/api/deploy", headers={"Authorization": "Bearer \xe9".encode("latin-1")})
+    assert r.status_code == 401
+
+
+def test_health_reports_the_loaded_commit_not_the_pulled_one(cfg, deploy):
+    deploy["stdout"] = "abc1234\n"
+    client = TestClient(web.create_app(cfg, FakeReader()))
+    deploy["stdout"] = "def5678\n"  # a later pull moved HEAD; this process didn't reload
+    assert client.get("/api/health").json() == {"status": "ok", "commit": "abc1234"}

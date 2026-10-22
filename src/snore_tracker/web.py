@@ -1,20 +1,30 @@
-"""Web UI on :8000: live waveform + snore score, recording start/stop, stats, clip playback."""
+"""Web UI on :8000: live waveform + snore score, recording start/stop, stats, clip playback.
+Also /api/health and /api/deploy for the n8n deploy webhook."""
 
+import hmac
 import json
+import os
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from snore_tracker.config import Config
 from snore_tracker.live import LiveReader
 
 RECORD_UNIT = "snore-record.service"
 ANALYZE_UNIT = "snore-analyze.service"
-TIMERS = ["snore-record.timer", "snore-analyze.timer", "snore-update.timer"]
+WEB_UNIT = "snore-web.service"
+TIMERS = ["snore-record.timer", "snore-analyze.timer"]
+PROJECT_DIR = os.environ.get("DEPLOY_PROJECT_DIR", "/home/pi/snore-tracker")
+# systemd's PATH lacks ~/.local/bin, so a bare "uv" isn't found (this bit fitness)
+UV_BIN = os.environ.get("UV_BIN", "/home/pi/.local/bin/uv")
+# Two pushes (or an n8n retry) must not pull/sync the same checkout at once
+DEPLOY_LOCK = threading.Lock()
 INDEX = Path(__file__).parent / "static" / "index.html"
 TOO_HOT_DB = -3
 TOO_QUIET_DB = -45
@@ -129,8 +139,56 @@ def list_clips(cfg):
     return clips
 
 
+def git_commit():
+    try:
+        out = subprocess.run(
+            ["git", "-C", PROJECT_DIR, "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return out.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def run_step(label, cmd, timeout):
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as e:
+        return {"step": label, "status": "error", "output": f"{type(e).__name__}: {e}"}
+    return {
+        "step": label,
+        "status": "ok" if out.returncode == 0 else "error",
+        "output": (out.stdout + out.stderr).strip()[-500:],
+    }
+
+
+def deploy_steps():
+    return [
+        ("git pull", ["git", "-C", PROJECT_DIR, "pull", "--ff-only"], 60),
+        ("uv sync", [UV_BIN, "sync", "--frozen", "--no-dev", "--project", PROJECT_DIR], 300),
+    ]
+
+
+def restart_web():
+    # allowed by the polkit rule; --no-block: queue the job, don't wait to be killed by it
+    subprocess.Popen(
+        ["systemctl", "--no-block", "restart", WEB_UNIT],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def busy(reason):
+    check = {"step": "check", "status": "error", "output": reason}
+    return JSONResponse({"status": "error", "results": [check]}, status_code=409)
+
+
 def create_app(cfg, reader):
     app = FastAPI()
+    # Read once: what this process loaded, not what a later pull left on disk
+    commit = git_commit()
 
     def require_clips():
         if not clips_enabled(cfg):  # checked per request: touch/rm the flag, no restart
@@ -166,6 +224,35 @@ def create_app(cfg, reader):
         if result.returncode != 0:
             raise HTTPException(500, result.stderr.strip())
         return recording_state()
+
+    @app.get("/api/health")
+    def health():
+        return {"status": "ok", "commit": commit}
+
+    @app.post("/api/deploy")
+    def deploy(tasks: BackgroundTasks, authorization: str = Header("")):
+        token = os.environ.get("DEPLOY_TOKEN", "")
+        if not token:
+            raise HTTPException(503, "DEPLOY_TOKEN not configured")
+        # bytes: compare_digest raises TypeError on non-ASCII str
+        if not hmac.compare_digest(authorization.encode(), f"Bearer {token}".encode()):
+            raise HTTPException(401, "invalid deploy token")
+        if not DEPLOY_LOCK.acquire(blocking=False):
+            return busy("another deploy is running")
+        try:
+            if analyzing():
+                # Swapping packages under the running analysis could break it
+                return busy("snore-analyze is running")
+            results = []
+            for label, cmd, timeout in deploy_steps():
+                results.append(run_step(label, cmd, timeout))
+                if results[-1]["status"] != "ok":
+                    return {"status": "error", "results": results}
+        finally:
+            DEPLOY_LOCK.release()
+        tasks.add_task(restart_web)  # runs after the response is sent
+        results.append({"step": f"systemctl restart {WEB_UNIT}", "status": "ok", "output": ""})
+        return {"status": "ok", "results": results}
 
     @app.get("/api/clips")
     def clips():
