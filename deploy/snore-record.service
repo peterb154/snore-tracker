@@ -10,9 +10,12 @@ ExecStartPre=/usr/bin/mkdir -p ${DATA_DIR}/recordings
 # %% is a literal % in systemd. Hourly segments, so a crash loses at most an hour.
 ExecStart=/usr/bin/ffmpeg -nostdin -hide_banner -loglevel warning \
     -f alsa -i ${SNORE_MIC} -ac 1 -ar 16000 \
+    -af aresample=async=1:first_pts=0 \
     -c:a libopus -b:a 24k -application audio \
     -f segment -segment_time 3600 -reset_timestamps 1 -strftime 1 \
     ${DATA_DIR}/recordings/%%Y-%%m-%%dT%%H-%%M-%%S%%z.opus
+# aresample smooths dsnoop's timestamp jitter, which otherwise logs ~3 "Non-monotonic DTS"
+# warnings a second (~100k lines a night)
 # ffmpeg finalizes the current segment on SIGINT, then exits 255
 KillSignal=SIGINT
 SuccessExitStatus=255
