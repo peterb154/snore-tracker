@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -279,3 +280,94 @@ def test_health_reports_the_loaded_commit_not_the_pulled_one(cfg, deploy):
     client = TestClient(web.create_app(cfg, FakeReader()))
     deploy["stdout"] = "def5678\n"  # a later pull moved HEAD; this process didn't reload
     assert client.get("/api/health").json() == {"status": "ok", "commit": "abc1234"}
+
+
+SGET_MIC = (Path(__file__).parent / "amixer_sget_mic.txt").read_text()  # real C-Media output
+
+
+@pytest.fixture
+def mixer(monkeypatch):
+    """Fake amixer: `sget Mic` reports the current gain; `sset` records and updates it."""
+    state = {"gain": 8, "sets": [], "card_missing": False}
+
+    def fake(cfg, *args):
+        if state["card_missing"]:
+            return subprocess.CompletedProcess(args, 1, "", "Invalid card number.")
+        if args[0] == "sset":
+            state["sets"].append((cfg.card, *args[1:]))
+            if args[1] == "Mic":
+                state["gain"] = int(args[2])
+            return subprocess.CompletedProcess(args, 0, "", "")
+        out = SGET_MIC.replace("Capture 8 [", f"Capture {state['gain']} [")
+        return subprocess.CompletedProcess(args, 0, out, "")
+
+    monkeypatch.setattr(web, "amixer", fake)
+    return state
+
+
+def test_read_gain_parses_amixer(cfg, mixer):
+    assert web.read_gain(cfg) == {"gain": 8, "gain_max": 16}
+    mixer["card_missing"] = True
+    assert web.read_gain(cfg) is None
+
+
+def test_settings_file_wins_over_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("SNORE_THRESHOLD", "0.5")
+    assert Config(data_dir=tmp_path).threshold == 0.5  # no file: .env
+    (tmp_path / "settings.json").write_text('{"gain": 6, "threshold": 0.3}')
+    cfg = Config(data_dir=tmp_path)
+    assert (cfg.gain, cfg.threshold) == (6, 0.3)
+
+
+def test_post_settings_sets_gain_and_saves(tmp_path, mixer, calls):
+    cfg = Config(data_dir=tmp_path / "snore-data")  # not created yet, as before the first night
+    client = TestClient(web.create_app(cfg, FakeReader()))
+    r = client.post("/api/settings", json={"gain": 5}, headers=SNORE)
+    assert r.json() == {"threshold": 0.5, "gain": 5, "gain_max": 16}
+    assert ("Device", "Auto Gain Control", "off") in mixer["sets"]
+    assert ("Device", "Mic", "5") in mixer["sets"]
+    assert json.loads(cfg.settings_file.read_text()) == {"gain": 5, "threshold": 0.5}
+
+
+def test_post_threshold_moves_the_live_line(cfg, client, mixer):
+    assert client.post("/api/settings", json={"threshold": 0.35}, headers=SNORE).status_code == 200
+    assert client.get("/api/status").json()["threshold"] == 0.35
+    assert mixer["sets"] == []  # threshold only: mixer untouched
+    assert Config(data_dir=cfg.data_dir).threshold == 0.35  # what tomorrow's analysis reads
+
+
+@pytest.mark.parametrize(
+    "body", [{"gain": 17}, {"gain": -1}, {"threshold": 0.0}, {"threshold": 1.0}, {"gain": "x"}]
+)
+def test_post_settings_rejects_out_of_range(cfg, client, mixer, body):
+    assert client.post("/api/settings", json=body, headers=SNORE).status_code == 422
+    assert mixer["sets"] == []
+    assert not cfg.settings_file.exists()
+
+
+def test_post_settings_needs_the_custom_header(cfg, client, mixer):
+    assert client.post("/api/settings", json={"gain": 5}).status_code == 403
+    assert mixer["sets"] == []
+
+
+def test_post_gain_without_the_mic_is_503(cfg, client, mixer):
+    mixer["card_missing"] = True
+    assert client.post("/api/settings", json={"gain": 5}, headers=SNORE).status_code == 503
+    assert client.get("/api/settings").json()["gain"] is None
+
+
+def test_startup_reapplies_the_saved_gain(tmp_path, mixer):
+    (tmp_path / "settings.json").write_text('{"gain": 6, "threshold": 0.4}')
+    web.apply_saved_gain(Config(data_dir=tmp_path))
+    assert ("Device", "Mic", "6") in mixer["sets"]
+
+
+def test_startup_without_a_saved_gain_leaves_the_mixer_alone(cfg, mixer):
+    web.apply_saved_gain(cfg)
+    assert mixer["sets"] == []
+
+
+def test_startup_survives_a_missing_mic(tmp_path, mixer):
+    (tmp_path / "settings.json").write_text('{"gain": 6}')
+    mixer["card_missing"] = True
+    web.apply_saved_gain(Config(data_dir=tmp_path))  # logs, doesn't raise

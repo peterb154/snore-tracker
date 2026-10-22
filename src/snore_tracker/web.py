@@ -4,6 +4,7 @@ Also /api/health and /api/deploy for the n8n deploy webhook."""
 import hmac
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -12,6 +13,7 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from snore_tracker.config import Config
 from snore_tracker.live import LiveReader
@@ -26,6 +28,9 @@ UV_BIN = os.environ.get("UV_BIN", "/home/pi/.local/bin/uv")
 # Two pushes (or an n8n retry) must not pull/sync the same checkout at once
 DEPLOY_LOCK = threading.Lock()
 INDEX = Path(__file__).parent / "static" / "index.html"
+# Mixer controls of the C-Media USB mic (`amixer -c Device scontents`)
+MIC_CONTROL = "Mic"
+AGC_CONTROL = "Auto Gain Control"
 TOO_HOT_DB = -3
 TOO_QUIET_DB = -45
 
@@ -139,6 +144,50 @@ def list_clips(cfg):
     return clips
 
 
+def amixer(cfg, *args):
+    return subprocess.run(["amixer", "-c", cfg.card, *args], capture_output=True, text=True)
+
+
+def read_gain(cfg):
+    """{"gain", "gain_max"} from `amixer sget Mic`, or None if the card isn't there."""
+    out = amixer(cfg, "sget", MIC_CONTROL)
+    limits = re.search(r"Limits: Capture \d+ - (\d+)", out.stdout)
+    value = re.search(r"Capture (\d+) \[", out.stdout)
+    if out.returncode != 0 or not limits or not value:
+        return None
+    return {"gain": int(value.group(1)), "gain_max": int(limits.group(1))}
+
+
+def set_gain(cfg, gain):
+    # AGC lifts the noise floor in a quiet room; not every card has it, so its result is ignored
+    amixer(cfg, "sset", AGC_CONTROL, "off")
+    result = amixer(cfg, "sset", MIC_CONTROL, str(gain))
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"amixer failed on card {cfg.card}")
+
+
+def save_settings(cfg):
+    cfg.data_dir.mkdir(parents=True, exist_ok=True)  # the recorder may not have made it yet
+    tmp = cfg.settings_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"gain": cfg.gain, "threshold": cfg.threshold}))
+    tmp.replace(cfg.settings_file)
+
+
+def apply_saved_gain(cfg):
+    """At startup, after alsa-restore at boot, so the UI's value wins with no `alsactl store`."""
+    if cfg.gain is None:
+        return
+    try:
+        set_gain(cfg, cfg.gain)
+    except RuntimeError as e:
+        print(f"couldn't apply saved gain {cfg.gain}: {e}")  # mic unplugged: carry on
+
+
+class Settings(BaseModel):
+    gain: int | None = Field(None, ge=0)
+    threshold: float | None = Field(None, ge=0.05, le=0.95)
+
+
 def git_commit():
     try:
         out = subprocess.run(
@@ -225,6 +274,30 @@ def create_app(cfg, reader):
             raise HTTPException(500, result.stderr.strip())
         return recording_state()
 
+    @app.get("/api/settings")
+    def get_settings():
+        return {"threshold": cfg.threshold} | (read_gain(cfg) or {"gain": None, "gain_max": None})
+
+    @app.post("/api/settings")
+    def post_settings(body: Settings, x_snore: str | None = Header(None)):
+        if x_snore != "1":
+            raise HTTPException(403, "missing X-Snore header")
+        if body.gain is not None:
+            mixer = read_gain(cfg)
+            if mixer is None:
+                raise HTTPException(503, f"mic card {cfg.card!r} not found")
+            if body.gain > mixer["gain_max"]:
+                raise HTTPException(422, f"gain must be 0-{mixer['gain_max']}")
+            try:
+                set_gain(cfg, body.gain)
+            except RuntimeError as e:
+                raise HTTPException(500, str(e)) from e
+            cfg.gain = body.gain
+        if body.threshold is not None:
+            cfg.threshold = body.threshold  # /api/status serves it, so the live line moves now
+        save_settings(cfg)
+        return get_settings()
+
     @app.get("/api/health")
     def health():
         return {"status": "ok", "commit": commit}
@@ -279,6 +352,7 @@ def main():
         from snore_tracker.model import Yamnet
 
         model = Yamnet(cfg.model_path)
+    apply_saved_gain(cfg)
     reader = LiveReader(cfg.mic, model)
     reader.start()
     uvicorn.run(create_app(cfg, reader), host="0.0.0.0", port=8000)
