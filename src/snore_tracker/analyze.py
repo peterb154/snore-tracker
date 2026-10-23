@@ -128,6 +128,8 @@ def summarize(minutes, events, cfg):
         "events": len(events),
         "loud_events": sum(e["peak_db"] >= cfg.loud_db for e in events),
         "max_db": max((m["db_max"] for m in snoring), default=None),
+        # garmin_connect re-counts minutes over Garmin's sleep window with this cutoff
+        "threshold": cfg.threshold,
     }
 
 

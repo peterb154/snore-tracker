@@ -114,6 +114,7 @@ def test_summary_counts_and_loud_events(cfg):
         "events": 1,
         "loud_events": 1,
         "max_db": -15.0,
+        "threshold": cfg.threshold,
     }
 
 
@@ -134,6 +135,7 @@ def test_payload_matches_garmin_connect_contract(cfg):
         "events",
         "loud_events",
         "max_db",
+        "threshold",
     }
     assert set(payload["minutes"][0]) == {"t", "snore_prob", "db_avg", "db_max"}
     assert len(payload["minutes"]) == 3

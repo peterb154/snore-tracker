@@ -122,7 +122,8 @@ in garmin_connect `app/main.py` (`SnoreNight`).
   "start": "2026-10-20T20:30:00",
   "end": "2026-10-21T08:29:59",
   "source": "pi4-yamnet-v1",
-  "summary": {"snore_minutes": 42, "snore_pct": 5.8, "events": 6, "loud_events": 1, "max_db": -18.2},
+  "summary": {"snore_minutes": 42, "snore_pct": 5.8, "events": 6, "loud_events": 1, "max_db": -18.2,
+              "threshold": 0.5},
   "minutes": [{"t": "2026-10-21T02:12", "snore_prob": 0.83, "db_avg": -41.2, "db_max": -22.5}],
   "events": [{"start": "2026-10-21T02:10", "end": "2026-10-21T02:17", "minutes": 7,
               "peak_t": "2026-10-21T02:12", "peak_db": -22.5, "clip": "clips/2026-10-21/02-12-31.opus"}]
@@ -131,6 +132,8 @@ in garmin_connect `app/main.py` (`SnoreNight`).
 
 - `night` is the wake-up date, which matches Garmin's `sleep.day`.
 - All times are local, with no offset.
+- `summary.threshold` is the snore cutoff the night was analyzed with; garmin_connect uses it to
+  re-count snore minutes over Garmin's sleep window.
 - `events` is extra local detail; the API ignores it.
 - `nights/<date>.posted` marks a night that has been sent. Unsent nights are retried every morning.
 
