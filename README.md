@@ -36,6 +36,16 @@ avoid pushing right before 08:30, since analysis can still start mid-sync.
 units: if a change touches `deploy/*` (units, `asound.conf`, polkit rule), re-run
 `deploy/install.sh`.
 
+To keep the board LEDs dark in the bedroom, append this to `/boot/firmware/config.txt` and reboot.
+On a Pi 4 the red PWR LED's polarity is inverted, so it needs `default-on` to stay off.
+
+```ini
+dtparam=act_led_trigger=none
+dtparam=act_led_activelow=off
+dtparam=pwr_led_trigger=default-on
+dtparam=pwr_led_activelow=off
+```
+
 ## Mic
 
 - Put it near the headboard, about 1 m from the sleeper's head, away from fans and vents.
