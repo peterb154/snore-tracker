@@ -86,8 +86,9 @@ snoring at or above `SNORE_THRESHOLD`. Real snores often score below 1.0, so set
 from what your own snoring scores.
 
 - **Start/Stop** runs `systemctl start|stop snore-record.service` as `pi`, allowed by
-  `deploy/polkit/50-snore.rules` (that unit, plus `snore-web.service` for deploys). A daytime
-  test recording is grouped into the *next* night by `night_of()`, so only Start when you mean it.
+  `deploy/polkit/50-snore.rules` (that unit, plus `snore-web.service` for deploys). `night_of()`
+  adds 12 h, so a test recording before noon joins *this morning's* night and the next analysis
+  **overwrites** it (clips included); after noon it joins the next night. Only Start when you mean it.
 - **Clip playback** is off by default. `touch ~/snore-data/.clip-playback` turns it on and `rm`
   turns it off; there's no restart. While it's off, `/api/clips` and `/clips/*` return 404.
 - No auth except on `/api/deploy`: LAN-only through NPM
