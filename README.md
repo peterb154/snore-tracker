@@ -9,6 +9,7 @@ night. The results go to [garmin_connect](https://github.com/peterb154/garmin_co
 20:30  snore-record.timer   ffmpeg → ~/snore-data/recordings/<start>.opus (hourly, 16 kHz, 24 kbps)
 08:30  snore-analyze.timer  stop recording → YAMNet → nights/<date>.json + clips → POST
 always snore-web.service    web UI on :8000 (https://snore.epetersons.com, LAN-only)
+15 min snore-post.timer     retry any unsent nights (and 2 min after boot)
 ```
 
 **Privacy:** full-night audio never leaves the Pi and is deleted once it's analyzed. One 10 s
@@ -19,7 +20,11 @@ levels and scores, never raw audio. Clips can be played over the LAN **only whil
 ## Setup (Pi)
 
 The Pi needs Raspberry Pi OS (Debian 13 is fine), `ffmpeg`, timezone `America/Chicago`, and NTP.
-The timestamps have to match the watch.
+The timestamps have to match the watch. The Pi has no RTC, so `deploy/wait-ntp.sh` holds a recording
+start up to 120 s for an NTP sync, then records anyway and logs a warning (`journalctl -u snore-record -p warning`).
+
+Wi-Fi falls back to the phone hotspot (NetworkManager profile `hotspot`, priority -10 vs `solonet`'s 10).
+On the hotspot `fitness.epetersons.com` doesn't resolve, so nights queue until the Pi is home again.
 
 ```bash
 git clone https://github.com/peterb154/snore-tracker ~/snore-tracker
@@ -81,8 +86,9 @@ snoring at or above `SNORE_THRESHOLD`. Real snores often score below 1.0, so set
 from what your own snoring scores.
 
 - **Start/Stop** runs `systemctl start|stop snore-record.service` as `pi`, allowed by
-  `deploy/polkit/50-snore.rules` (that unit, plus `snore-web.service` for deploys). A daytime
-  test recording is grouped into the *next* night by `night_of()`, so only Start when you mean it.
+  `deploy/polkit/50-snore.rules` (that unit, plus `snore-web.service` for deploys). `night_of()`
+  adds 12 h, so a test recording before noon joins *this morning's* night and the next analysis
+  **overwrites** it (clips included); after noon it joins the next night. Only Start when you mean it.
 - **Clip playback** is off by default. `touch ~/snore-data/.clip-playback` turns it on and `rm`
   turns it off; there's no restart. While it's off, `/api/clips` and `/clips/*` return 404.
 - No auth except on `/api/deploy`: LAN-only through NPM
@@ -135,7 +141,8 @@ in garmin_connect `app/main.py` (`SnoreNight`).
 - `summary.threshold` is the snore cutoff the night was analyzed with; garmin_connect uses it to
   re-count snore minutes over Garmin's sleep window.
 - `events` is extra local detail; the API ignores it.
-- `nights/<date>.posted` marks a night that has been sent. Unsent nights are retried every morning.
+- `nights/<date>.posted` marks a night that has been sent. `snore-post.timer` retries unsent
+  nights 2 min after boot and every 15 min (`journalctl -u snore-post`).
 
 ## Dev
 

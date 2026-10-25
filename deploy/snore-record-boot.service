@@ -6,7 +6,9 @@ After=sound.target time-sync.target
 Type=oneshot
 # Only inside the window, which must match snore-record.timer (20:30) and
 # snore-analyze.timer (08:30). snore-record itself has no window, so the web UI can start it.
-ExecCondition=/bin/sh -c 'h=$$(date +%%H%%M); [ "$$h" -ge 2030 ] || [ "$$h" -lt 830 ]'
+# The clock is checked after the NTP wait, since right after boot it can be hours off.
+ExecCondition=/bin/sh -c '/home/pi/snore-tracker/deploy/wait-ntp.sh; h=$$(date +%%H%%M); [ "$$h" -ge 2030 ] || [ "$$h" -lt 830 ]'
+TimeoutStartSec=180
 ExecStart=/bin/systemctl start --no-block snore-record.service
 
 [Install]

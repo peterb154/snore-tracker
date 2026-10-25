@@ -183,7 +183,10 @@ def analyze_night(night, segments, model, cfg):
     save_clips(payload, frames, cfg)
     cfg.nights.mkdir(parents=True, exist_ok=True)
     out = cfg.nights / f"{night}.json"
-    out.write_text(json.dumps(payload, indent=1))
+    # Write then rename, so snore-post.timer never reads a half-written night
+    tmp = out.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=1))
+    tmp.replace(out)
     # New numbers (e.g. a KEEP_AUDIO re-run after tuning) must be posted again
     out.with_suffix(".posted").unlink(missing_ok=True)
     if not cfg.keep_audio:
