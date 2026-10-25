@@ -9,6 +9,7 @@ night. The results go to [garmin_connect](https://github.com/peterb154/garmin_co
 20:30  snore-record.timer   ffmpeg → ~/snore-data/recordings/<start>.opus (hourly, 16 kHz, 24 kbps)
 08:30  snore-analyze.timer  stop recording → YAMNet → nights/<date>.json + clips → POST
 always snore-web.service    web UI on :8000 (https://snore.epetersons.com, LAN-only)
+15 min snore-post.timer     retry any unsent nights (and 2 min after boot)
 ```
 
 **Privacy:** full-night audio never leaves the Pi and is deleted once it's analyzed. One 10 s
@@ -19,7 +20,11 @@ levels and scores, never raw audio. Clips can be played over the LAN **only whil
 ## Setup (Pi)
 
 The Pi needs Raspberry Pi OS (Debian 13 is fine), `ffmpeg`, timezone `America/Chicago`, and NTP.
-The timestamps have to match the watch.
+The timestamps have to match the watch. The Pi has no RTC, so `deploy/wait-ntp.sh` holds a recording
+start up to 120 s for an NTP sync, then records anyway and logs a warning (`journalctl -u snore-record -p warning`).
+
+Wi-Fi falls back to the phone hotspot (NetworkManager profile `hotspot`, priority -10 vs `solonet`'s 10).
+On the hotspot `fitness.epetersons.com` doesn't resolve, so nights queue until the Pi is home again.
 
 ```bash
 git clone https://github.com/peterb154/snore-tracker ~/snore-tracker
@@ -135,7 +140,8 @@ in garmin_connect `app/main.py` (`SnoreNight`).
 - `summary.threshold` is the snore cutoff the night was analyzed with; garmin_connect uses it to
   re-count snore minutes over Garmin's sleep window.
 - `events` is extra local detail; the API ignores it.
-- `nights/<date>.posted` marks a night that has been sent. Unsent nights are retried every morning.
+- `nights/<date>.posted` marks a night that has been sent. `snore-post.timer` retries unsent
+  nights 2 min after boot and every 15 min (`journalctl -u snore-post`).
 
 ## Dev
 

@@ -6,6 +6,9 @@ After=sound.target time-sync.target
 User=pi
 EnvironmentFile=/home/pi/snore-tracker/.env
 # Started by snore-record.timer, snore-record-boot.service (mid-night reboot) or the web UI.
+# time-sync.target doesn't wait for a sync (systemd-time-wait-sync is off); this does, briefly
+ExecStartPre=/home/pi/snore-tracker/deploy/wait-ntp.sh
+TimeoutStartSec=180
 ExecStartPre=/usr/bin/mkdir -p ${DATA_DIR}/recordings
 # %% is a literal % in systemd. Hourly segments, so a crash loses at most an hour.
 ExecStart=/usr/bin/ffmpeg -nostdin -hide_banner -loglevel warning \

@@ -1,0 +1,10 @@
+[Unit]
+Description=Snore tracker: retry posting unsent nights to garmin_connect
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+EnvironmentFile=/home/pi/snore-tracker/.env
+ExecStart=/home/pi/snore-tracker/.venv/bin/snore-post

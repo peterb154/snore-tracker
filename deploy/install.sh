@@ -26,7 +26,7 @@ sudo systemctl daemon-reload
 # Older installs enabled snore-record.service for boot resume; snore-record-boot does that now
 sudo systemctl disable snore-record.service 2>/dev/null || true
 sudo systemctl enable snore-record-boot.service  # boot-time resume, only inside the window
-sudo systemctl enable --now snore-record.timer snore-analyze.timer
+sudo systemctl enable --now snore-record.timer snore-analyze.timer snore-post.timer
 sudo systemctl enable snore-web.service
 sudo systemctl restart snore-web.service  # start, or pick up a changed unit or code
 systemctl list-timers 'snore-*'
