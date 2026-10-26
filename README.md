@@ -23,8 +23,8 @@ The Pi needs Raspberry Pi OS (Debian 13 is fine), `ffmpeg`, timezone `America/Ch
 The timestamps have to match the watch. The Pi has no RTC, so `deploy/wait-ntp.sh` holds a recording
 start up to 120 s for an NTP sync, then records anyway and logs a warning (`journalctl -u snore-record -p warning`).
 
-Wi-Fi falls back to the phone hotspot (NetworkManager profile `hotspot`, priority -10 vs `solonet`'s 10).
-On the hotspot `fitness.epetersons.com` doesn't resolve, so nights queue until the Pi is home again.
+Wi-Fi falls back to the phone hotspot (NetworkManager profile `hotspot`, priority -10 vs `solonet`'s 10);
+see [Away from home](#away-from-home).
 
 ```bash
 git clone https://github.com/peterb154/snore-tracker ~/snore-tracker
@@ -50,6 +50,25 @@ dtparam=act_led_activelow=off
 dtparam=pwr_led_trigger=default-on
 dtparam=pwr_led_activelow=off
 ```
+
+### Away from home
+
+Posts go through the home WireGuard VPN (a wg-easy peer).
+`deploy/nm/50-wg-away` brings the NetworkManager connection `wg-home` up when Wi-Fi joins anything
+but `solonet`, and down at home, where the tunnel can't connect. Only NPM (`.3`) and
+Pi-hole (`.2`) are routed through it. The key lives only on the Pi; to set it up again, as root:
+
+```bash
+cp snore-tracker.conf wg-home.conf   # from the wg-easy UI; the file name becomes the connection name
+nmcli con import type wireguard file wg-home.conf && shred -u wg-home.conf
+nmcli con modify wg-home connection.autoconnect no ipv4.dns-priority 50
+sed -i 's|^allowed-ips=.*|allowed-ips=192.168.0.3/32;192.168.0.2/32;|' \
+    /etc/NetworkManager/system-connections/wg-home.nmconnection && nmcli con reload
+```
+
+The n8n deploy can't reach the Pi while it's away (`snore.epetersons.com` points at its LAN
+address), so n8n emails a failure. Deploy by hand over the hotspot instead:
+`ssh pi@snore-tracker.local 'cd ~/snore-tracker && git pull --ff-only && uv sync --frozen --no-dev && systemctl restart snore-web'`.
 
 ## Mic
 
