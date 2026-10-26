@@ -18,6 +18,8 @@ echo "4d8b4a53282dc83ef04e3e7dbc4fbc98082e34e44ed798e16c3a0cdd4c584faf  models/y
 sudo cp deploy/asound.conf /etc/asound.conf  # dsnoop "snoop": recorder + web UI share the mic
 sudo rm -f /etc/polkit-1/rules.d/50-snore-record.rules  # renamed to 50-snore.rules
 sudo cp deploy/polkit/50-snore.rules /etc/polkit-1/rules.d/
+# Away from home, route posts through the wg-home tunnel (README: Setup)
+sudo install -m 755 -o root -g root deploy/nm/50-wg-away /etc/NetworkManager/dispatcher.d/
 # The noon git pull is replaced by the n8n webhook (POST /api/deploy)
 sudo systemctl disable --now snore-update.timer 2>/dev/null || true
 sudo rm -f /etc/systemd/system/snore-update.service /etc/systemd/system/snore-update.timer

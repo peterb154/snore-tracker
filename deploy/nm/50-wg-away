@@ -1,0 +1,10 @@
+#!/bin/sh
+# NetworkManager dispatcher: bring up the wg-home tunnel when Wi-Fi joins anything but home.
+# At home the VPN endpoint is our own WAN address, so the tunnel can't connect, and its
+# routes would shadow the LAN. Installed to /etc/NetworkManager/dispatcher.d/ (root, 755).
+[ "$1" = wlan0 ] && [ "$2" = up ] || exit 0
+if [ "$CONNECTION_ID" = solonet ]; then
+    nmcli connection down wg-home 2>/dev/null || true
+else
+    nmcli connection up wg-home || logger -t wg-away "wg-home failed to come up on $CONNECTION_ID"
+fi
