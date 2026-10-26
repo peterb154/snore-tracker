@@ -20,6 +20,9 @@ sudo rm -f /etc/polkit-1/rules.d/50-snore-record.rules  # renamed to 50-snore.ru
 sudo cp deploy/polkit/50-snore.rules /etc/polkit-1/rules.d/
 # Away from home, route posts through the wg-home tunnel (README: Setup)
 sudo install -m 755 -o root -g root deploy/nm/50-wg-away /etc/NetworkManager/dispatcher.d/
+# Scripts that run as root get root-owned copies: pi can write ~/snore-tracker
+sudo install -m 755 -o root -g root deploy/wait-ntp.sh /usr/local/sbin/snore-wait-ntp
+sudo install -m 755 -o root -g root deploy/snore-leds.sh /usr/local/sbin/snore-leds
 # The noon git pull is replaced by the n8n webhook (POST /api/deploy)
 sudo systemctl disable --now snore-update.timer 2>/dev/null || true
 sudo rm -f /etc/systemd/system/snore-update.service /etc/systemd/system/snore-update.timer
@@ -30,5 +33,7 @@ sudo systemctl disable snore-record.service 2>/dev/null || true
 sudo systemctl enable snore-record-boot.service  # boot-time resume, only inside the window
 sudo systemctl enable --now snore-record.timer snore-analyze.timer snore-post.timer
 sudo systemctl enable snore-web.service
+sudo systemctl enable snore-leds.service
+sudo systemctl restart snore-leds.service  # pick up a changed script
 sudo systemctl restart snore-web.service  # start, or pick up a changed unit or code
 systemctl list-timers 'snore-*'

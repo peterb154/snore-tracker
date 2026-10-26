@@ -1,0 +1,14 @@
+[Unit]
+Description=Snore tracker: network status on the board LEDs
+After=NetworkManager.service
+
+[Service]
+# Root, for /sys/class/leds. The script is a root-owned copy (install.sh), not ~pi's.
+# No EnvironmentFile: ~pi/.env is pi-writable, and PATH or LD_PRELOAD from it would run as root.
+ExecStart=/usr/local/sbin/snore-leds
+ExecStopPost=/usr/local/sbin/snore-leds show dark
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -24,7 +24,9 @@ The timestamps have to match the watch. The Pi has no RTC, so `deploy/wait-ntp.s
 start up to 120 s for an NTP sync, then records anyway and logs a warning (`journalctl -u snore-record -p warning`).
 
 Wi-Fi falls back to the phone hotspot (NetworkManager profile `hotspot`, priority -10 vs `solonet`'s 10);
-see [Away from home](#away-from-home).
+see [Away from home](#away-from-home). Both profiles have `connection.autoconnect-retries 0` (retry
+forever; the default gives up for a while after 4 tries). An iPhone only advertises its hotspot while
+Settings → Personal Hotspot is open, so if the Pi drops off, open that page until it rejoins.
 
 ```bash
 git clone https://github.com/peterb154/snore-tracker ~/snore-tracker
@@ -50,6 +52,21 @@ dtparam=act_led_activelow=off
 dtparam=pwr_led_trigger=default-on
 dtparam=pwr_led_activelow=off
 ```
+
+### Status lights
+
+`snore-leds.service` (root) then uses the LEDs to show whether the Pi got online, checking every
+30 s. They stay dark 20:30–08:30, except for the first 10 min after a boot.
+
+| Green | Red | Meaning |
+|---|---|---|
+| slow blink | off | joining Wi-Fi or waiting for NTP |
+| solid | off | online, garmin_connect reachable |
+| slow blink | solid | online, but garmin_connect unreachable (VPN or Pi-hole down) |
+| off | slow blink | no network for 3 min |
+
+`snore-leds show joining|online|unreachable|offline|dark` sets one state by hand (stop the
+service first). `journalctl -u snore-leds` logs each change.
 
 ### Away from home
 
