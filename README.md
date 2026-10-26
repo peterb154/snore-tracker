@@ -51,6 +51,21 @@ dtparam=pwr_led_trigger=default-on
 dtparam=pwr_led_activelow=off
 ```
 
+### Status lights
+
+`snore-leds.service` (root) then uses the LEDs to show whether the Pi got online, checking every
+30 s. They stay dark 20:30–08:30, except for the first 10 min after a boot.
+
+| Green | Red | Meaning |
+|---|---|---|
+| slow blink | off | joining Wi-Fi or waiting for NTP |
+| solid | off | online, garmin_connect reachable |
+| slow blink | solid | online, but garmin_connect unreachable (VPN or Pi-hole down) |
+| off | slow blink | no network for 3 min |
+
+`snore-leds show joining|online|unreachable|offline|dark` sets one state by hand (stop the
+service first). `journalctl -u snore-leds` logs each change.
+
 ### Away from home
 
 Posts go through the home WireGuard VPN (a wg-easy peer).
