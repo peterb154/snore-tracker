@@ -5,6 +5,14 @@
 [ "$1" = wlan0 ] && [ "$2" = up ] || exit 0
 if [ "$CONNECTION_ID" = solonet ]; then
     nmcli connection down wg-home 2>/dev/null || true
-else
-    nmcli connection up wg-home || logger -t wg-away "wg-home failed to come up on $CONNECTION_ID"
+    exit 0
 fi
+# Retry in the background: a fresh hotspot may not resolve the endpoint yet, and a single
+# failure would otherwise queue every night until the next reconnect.
+(
+    for _ in 1 2 3 4 5; do
+        nmcli connection up wg-home && exit 0
+        sleep 30
+    done
+    logger -t wg-away -p warning "wg-home failed to come up on $CONNECTION_ID"
+) >/dev/null 2>&1 &
