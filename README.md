@@ -24,7 +24,9 @@ The timestamps have to match the watch. The Pi has no RTC, so `deploy/wait-ntp.s
 start up to 120 s for an NTP sync, then records anyway and logs a warning (`journalctl -u snore-record -p warning`).
 
 Wi-Fi falls back to the phone hotspot (NetworkManager profile `hotspot`, priority -10 vs `solonet`'s 10);
-see [Away from home](#away-from-home).
+see [Away from home](#away-from-home). Both profiles have `connection.autoconnect-retries 0` (retry
+forever; the default gives up for a while after 4 tries). An iPhone only advertises its hotspot while
+Settings → Personal Hotspot is open, so if the Pi drops off, open that page until it rejoins.
 
 ```bash
 git clone https://github.com/peterb154/snore-tracker ~/snore-tracker
