@@ -1,0 +1,9 @@
+#!/bin/sh
+# NetworkManager dispatcher: timesyncd starts before Wi-Fi, fails to resolve every server and
+# backs off, so after the network comes up it can sit for minutes (3-5 min seen on the hotspot).
+# A fresh timesyncd has no backoff. Only while unsynced, so it's a no-op once the clock is set.
+# Installed to /etc/NetworkManager/dispatcher.d/ (root, 755).
+[ "$2" = up ] && [ "$1" != lo ] || exit 0
+[ "$(timedatectl show -p NTPSynchronized --value)" = yes ] && exit 0
+logger -t ntp-kick "$1 up while unsynced, restarting systemd-timesyncd"
+systemctl restart systemd-timesyncd

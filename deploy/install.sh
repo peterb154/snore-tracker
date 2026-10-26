@@ -20,6 +20,11 @@ sudo rm -f /etc/polkit-1/rules.d/50-snore-record.rules  # renamed to 50-snore.ru
 sudo cp deploy/polkit/50-snore.rules /etc/polkit-1/rules.d/
 # Away from home, route posts through the wg-home tunnel (README: Setup)
 sudo install -m 755 -o root -g root deploy/nm/50-wg-away /etc/NetworkManager/dispatcher.d/
+# Kick timesyncd when a link comes up unsynced (it backs off for minutes otherwise)
+sudo install -m 755 -o root -g root deploy/nm/60-ntp-kick /etc/NetworkManager/dispatcher.d/
+# Persistent journal, 50 MB cap
+sudo install -D -m 644 deploy/journald-snore.conf /etc/systemd/journald.conf.d/snore.conf
+sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald
 # Scripts that run as root get root-owned copies: pi can write ~/snore-tracker
 sudo install -m 755 -o root -g root deploy/wait-ntp.sh /usr/local/sbin/snore-wait-ntp
 sudo install -m 755 -o root -g root deploy/snore-leds.sh /usr/local/sbin/snore-leds
