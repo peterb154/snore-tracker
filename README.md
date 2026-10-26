@@ -22,6 +22,9 @@ levels and scores, never raw audio. Clips can be played over the LAN **only whil
 The Pi needs Raspberry Pi OS (Debian 13 is fine), `ffmpeg`, timezone `America/Chicago`, and NTP.
 The timestamps have to match the watch. The Pi has no RTC, so `deploy/wait-ntp.sh` holds a recording
 start up to 120 s for an NTP sync, then records anyway and logs a warning (`journalctl -u snore-record -p warning`).
+timesyncd starts before Wi-Fi and backs off for minutes after its first failures, so
+`deploy/nm/60-ntp-kick` restarts it whenever a link comes up while unsynced (sync then takes ~1 s).
+The journal is persistent (`deploy/journald-snore.conf`, 50 MB cap), so `journalctl -b -1` shows the last boot.
 
 Wi-Fi falls back to the phone hotspot (NetworkManager profile `hotspot`, priority -10 vs `solonet`'s 10);
 see [Away from home](#away-from-home). Both profiles have `connection.autoconnect-retries 0` (retry
