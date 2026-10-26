@@ -63,7 +63,8 @@ last=
 while :; do
     now=$(date +%s)
     net=no
-    [ "$(nmcli -t -g STATE general)" = connected ] && net=yes && offline_since=$now
+    # "connected (local only)" etc. (e.g. a captive portal) counts: it shows as unreachable
+    case $(nmcli -t -g STATE general) in connected*) net=yes; offline_since=$now ;; esac
     synced=$(timedatectl show -p NTPSynchronized --value)
     reachable=no
     if [ "$net" = yes ]; then
