@@ -101,6 +101,7 @@ def status(cfg, level):
     disk_dir = cfg.data_dir if cfg.data_dir.exists() else Path.home()
     return {
         "recording": rec | segments(cfg),
+        "analyzing": analyzing(),
         "level": level | {"hint": level_hint(level["peak_db"])},
         "disk_free_gb": round(shutil.disk_usage(disk_dir).free / 1e9, 1),
         "last_night": last_night(cfg),
@@ -265,11 +266,16 @@ def create_app(cfg, reader):
         # A custom header forces a CORS preflight, so another site's page can't press Start
         if x_snore != "1":
             raise HTTPException(403, "missing X-Snore header")
-        if action not in ("start", "stop"):
+        if action not in ("start", "stop", "wake"):
             raise HTTPException(404)
-        if action == "start" and analyzing():
+        if action in ("start", "wake") and analyzing():
             raise HTTPException(409, "snore-analyze is running; try again when it finishes")
-        result = systemctl(action, RECORD_UNIT)  # allowed by the polkit rule
+        # Both allowed by the polkit rule. Analyze Conflicts= the recorder, so it stops it first.
+        # --no-block: a oneshot's start would hold this request for the whole analysis.
+        if action == "wake":
+            result = systemctl("start", "--no-block", ANALYZE_UNIT)
+        else:
+            result = systemctl(action, RECORD_UNIT)
         if result.returncode != 0:
             raise HTTPException(500, result.stderr.strip())
         return recording_state()
