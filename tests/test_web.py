@@ -173,6 +173,50 @@ def test_record_start_refused_while_analyzing(client, calls, monkeypatch):
     assert ("start", "snore-record.service") not in calls
 
 
+def test_wake_starts_the_analysis_without_blocking(client, calls):
+    assert client.post("/api/record/wake", headers=SNORE).status_code == 200
+    assert ("start", "--no-block", "snore-analyze.service") in calls
+    assert ("start", "snore-record.service") not in calls
+
+
+def test_wake_needs_the_custom_header(client, calls):
+    assert client.post("/api/record/wake").status_code == 403
+    assert calls == []
+
+
+def test_wake_refused_while_analyzing(client, calls, monkeypatch):
+    def fake(*args):
+        calls.append(args)
+        if args[0] == "is-active":
+            return subprocess.CompletedProcess(args, 3, "activating\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(web, "systemctl", fake)
+    assert client.post("/api/record/wake", headers=SNORE).status_code == 409
+    assert not any(c[0] == "start" for c in calls)
+
+
+def test_wake_reports_a_systemctl_failure(client, monkeypatch):
+    def fake(*args):
+        code = 1 if args[0] == "start" else 0
+        return subprocess.CompletedProcess(args, code, "", "Access denied")
+
+    monkeypatch.setattr(web, "systemctl", fake)
+    r = client.post("/api/record/wake", headers=SNORE)
+    assert r.status_code == 500
+    assert r.json()["detail"] == "Access denied"
+
+
+@pytest.mark.parametrize("state, expected", [("activating", True), ("inactive", False)])
+def test_status_reports_analyzing(client, monkeypatch, state, expected):
+    def fake(*args):
+        out = state + "\n" if args[0] == "is-active" else ""
+        return subprocess.CompletedProcess(args, 0, out, "")
+
+    monkeypatch.setattr(web, "systemctl", fake)
+    assert client.get("/api/status").json()["analyzing"] is expected
+
+
 def test_record_rejects_other_actions(client, calls):
     assert client.post("/api/record/restart", headers=SNORE).status_code == 404
     assert calls == []

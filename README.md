@@ -105,7 +105,7 @@ address), so n8n emails a failure. Deploy by hand over the hotspot instead:
 ## Web UI
 
 `snore-web.service` serves a single page on `:8000`: live waveform and level, the live YAMNet
-snore score with a 60 s sparkline, recording Start/Stop, segment/disk stats, last night's
+snore score with a 60 s sparkline, recording Start/Stop/Wake up, segment/disk stats, last night's
 summary, and the next timer runs. The waveform and score work whether or not a recording is running.
 
 **Tuning** has two sliders, applied when you let go:
@@ -125,9 +125,14 @@ snoring at or above `SNORE_THRESHOLD`. Real snores often score below 1.0, so set
 from what your own snoring scores.
 
 - **Start/Stop** runs `systemctl start|stop snore-record.service` as `pi`, allowed by
-  `deploy/polkit/50-snore.rules` (that unit, plus `snore-web.service` for deploys). `night_of()`
+  `deploy/polkit/50-snore.rules` (that unit, `snore-analyze.service` for Wake up, and
+  `snore-web.service` for deploys). `night_of()`
   adds 12 h, so a test recording before noon joins *this morning's* night and the next analysis
   **overwrites** it (clips included); after noon it joins the next night. Only Start when you mean it.
+- **Wake up** ends the recording and starts the analysis now instead of at 08:30, by running
+  `systemctl start --no-block snore-analyze.service`. Expect about 55 s per hour recorded. The
+  08:30 timer still fires but finds no segments, so the results stay. Don't reboot or press Start
+  before 08:30 afterwards: a new recording would overwrite the night with just those few minutes.
 - **Clip playback** is off by default. `touch ~/snore-data/.clip-playback` turns it on and `rm`
   turns it off; there's no restart. While it's off, `/api/clips` and `/clips/*` return 404.
 - No auth except on `/api/deploy`: LAN-only through NPM

@@ -22,7 +22,7 @@
   dt { color: var(--dim); }
   dd { margin: 0; font-variant-numeric: tabular-nums; }
   button { font: inherit; padding: 6px 16px; border-radius: 6px; border: 0; cursor: pointer; }
-  #start { background: var(--ok); } #stop { background: var(--hot); }
+  #start { background: var(--ok); } #stop { background: var(--hot); } #wake { background: var(--accent); }
   button:disabled { opacity: .4; cursor: default; }
   .live { font-size: 13px; color: var(--dim); } .live.on { color: var(--ok); }
   ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
@@ -70,6 +70,7 @@
       <b id="recstate">–</b>
       <button id="start">Start</button>
       <button id="stop">Stop</button>
+      <button id="wake">Wake up</button>
       <span id="recerr" style="color:var(--hot)"></span>
     </div>
     <dl>
@@ -102,7 +103,7 @@ const $ = (id) => document.getElementById(id);
 const WAVE_SLICES = 200;   // 10 s of 50 ms slices
 const SPARK_POINTS = 62;   // 60 s of 0.975 s windows
 const wave = [], spark = [];
-let threshold = 0.5, peak = null;
+let threshold = 0.5, peak = null, wasAnalyzing = false;
 
 function fitCanvas(c) {
   const r = window.devicePixelRatio || 1;
@@ -185,9 +186,11 @@ async function refreshStatus() {
   $("threshold").style.left = threshold * 100 + "%";
 
   const r = s.recording;
-  $("recstate").textContent = r.active ? "● recording" : "stopped";
+  $("recstate").textContent = s.analyzing ? "analyzing…" : r.active ? "● recording" : "stopped";
   $("recstate").style.color = r.active ? "#ef5350" : "";
-  $("start").disabled = r.active; $("stop").disabled = !r.active;
+  // Starting the recorder would kill the analysis (Conflicts=)
+  $("start").disabled = r.active || s.analyzing; $("stop").disabled = !r.active;
+  $("wake").disabled = s.analyzing || !(r.active || r.count);
   $("started").textContent = fmtTime(r.started);
   $("elapsed").textContent = fmtDur(r.elapsed);
   $("segments").textContent = `${r.count} (${r.mb} MB)`;
@@ -210,7 +213,9 @@ async function refreshStatus() {
   dl($("timers"), Object.entries(s.timers).map(([t, next]) => [t.replace(".timer", ""), next ? fmtTime(next) : "not scheduled"]));
 
   $("clips").hidden = !s.clip_playback;
-  if (s.clip_playback && !$("cliplist").childElementCount) loadClips();
+  const analysisDone = wasAnalyzing && !s.analyzing;  // it may have added clips
+  wasAnalyzing = s.analyzing;
+  if (s.clip_playback && (analysisDone || !$("cliplist").childElementCount)) loadClips();
   if (!s.clip_playback) $("cliplist").replaceChildren();
 }
 
@@ -273,6 +278,8 @@ $("thresh").onchange = () => saveSetting({ threshold: Number($("thresh").value) 
 
 $("start").onclick = () => record("start");
 $("stop").onclick = () => record("stop");
+// A stray tap at 3am would end the night's recording
+$("wake").onclick = () => { if (confirm("End the recording and analyze the night now?")) record("wake"); };
 
 function resize() { fitCanvas($("wave")); fitCanvas($("spark")); drawSpark(); }
 window.addEventListener("resize", resize);
